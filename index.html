@@ -19,19 +19,1183 @@
     <div id="root"></div>
 
     <script type="text/babel">
-      // 1) Paste your entire React component file content here,
-      // 2) Replace "export default function ..." with "function ..."
-      // 3) At the bottom, render it.
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
-      // ---- PASTE START ----
+// DRAGONFALL: MOUNTAIN EXILE — v0.2 (single-file)
+// - Node web travel (Knights of Pen & Paper vibe)
+// - XP-gated promotions (Element OR Cross-Training unlocked by battles)
+// - Class lattice viewer at start
+// - Save/Load via localStorage
 
-      // Replace this line:
-      // export default function DragonfallMountainExilePreview() {
-      // with:
-      // function DragonfallMountainExilePreview() {
+const VERSION = "0.2.0";
+const SAVE_KEY = "dragonfall_save_v02";
 
-      // (paste your full code here)
-      // ---- PASTE END ----
+function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+function uid() { return Math.random().toString(16).slice(2) + Date.now().toString(16); }
+
+// Deterministic RNG (mulberry32)
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function rollDie(rng, sides) { return 1 + Math.floor(rng() * sides); }
+function fmtBonus(b) { if (b === 0) return "+0"; return b > 0 ? `+${b}` : `${b}`; }
+
+const DR = { easy: 10, standard: 13, hard: 16, extreme: 19 };
+
+const WEAPONS = [
+  {
+    key: "sword",
+    name: "Sword",
+    tagline: "Close combat • control • endurance",
+    bias: { might: 1, finesse: 1, wits: 0, will: 0 },
+    styles: [
+      { key: "guard", name: "Guard", desc: "Defense, counters, zone control." },
+      { key: "edge", name: "Edge", desc: "Precision, crits, bleed." },
+      { key: "fury", name: "Fury", desc: "Momentum, risk, finishing." },
+    ],
+  },
+  {
+    key: "bow",
+    name: "Bow",
+    tagline: "Range • positioning • tempo",
+    bias: { might: 0, finesse: 2, wits: 1, will: 0 },
+    styles: [
+      { key: "sniper", name: "Sniper", desc: "Single-target lethality." },
+      { key: "skirmisher", name: "Skirmisher", desc: "Mobility, rapid shots." },
+      { key: "trapper", name: "Trapper", desc: "Terrain control, prep." },
+    ],
+  },
+  {
+    key: "wand",
+    name: "Wand",
+    tagline: "Channeling • volatility • rituals",
+    bias: { might: 0, finesse: 0, wits: 1, will: 2 },
+    styles: [
+      { key: "invoker", name: "Invoker", desc: "Raw spellcasting." },
+      { key: "binder", name: "Binder", desc: "Debuffs, wards, control." },
+      { key: "channeler", name: "Channeler", desc: "Sustained power, scaling." },
+    ],
+  },
+];
+
+const ELEMENTS = [
+  { key: "fire", name: "Fire", vibe: "Escalation • burning risk" },
+  { key: "ice", name: "Ice", vibe: "Control • delay • precision" },
+  { key: "storm", name: "Storm", vibe: "Speed • chaining chaos" },
+  { key: "earth", name: "Earth", vibe: "Endurance • retaliation" },
+  { key: "void", name: "Void", vibe: "Sacrifice • inversion" },
+];
+
+// Enemies (preview)
+const ENEMIES = [
+  { key: "wyrmling", name: "Wyrmling Scout", hp: 8, dr: 12, attackDR: 12, dmg: [1, 3],
+    desc: "A juvenile dragonkin with a barbed spear and too much confidence." },
+  { key: "ashwolf", name: "Ash-Wolf", hp: 10, dr: 13, attackDR: 12, dmg: [2, 4],
+    desc: "Grey fur dusted in ember. It circles like a hungry thought." },
+  { key: "cultist", name: "Scalebound Cultist", hp: 9, dr: 12, attackDR: 13, dmg: [1, 4],
+    desc: "Eyes like candles. The air around them tastes of coin and smoke." },
+];
+
+const SITES = [
+  { key: "ashway_bridge", name: "Ashway Bridge",
+    tone: "Black water churns beneath a cracked span. Wind howls through broken stone ribs.",
+    loot: ["Iron Shards", "Salt Rope", "Old Sigil"] },
+  { key: "ruined_relay", name: "Ruined Beacon Relay",
+    tone: "A collapsed outpost with a dormant crystal core. Someone died here recently.",
+    loot: ["Relay Parts", "Beacon Ink", "Ration Bar"] },
+  { key: "wyrm_path", name: "Wyrm Path",
+    tone: "Claw marks score the rock. Heat breathes from the cracks like a sleeping furnace.",
+    loot: ["Scaled Fragment", "Charcoal Resin", "Bright Glass"] },
+];
+
+function computeStats(base, weaponBias, styleKey, elementKey, crossKey) {
+  const s = { ...base };
+  for (const k of Object.keys(weaponBias)) s[k] += weaponBias[k];
+
+  if (styleKey) {
+    const map = {
+      guard: { might: 1 }, edge: { finesse: 1 }, fury: { might: 1 },
+      sniper: { finesse: 1, wits: 1 }, skirmisher: { finesse: 1 }, trapper: { wits: 2 },
+      invoker: { wits: 1, will: 1 }, binder: { wits: 1, will: 1 }, channeler: { will: 2 },
+    };
+    const add = map[styleKey] || {};
+    for (const k of Object.keys(add)) s[k] = (s[k] || 0) + add[k];
+  }
+
+  if (elementKey) {
+    const map = {
+      fire: { might: 1 }, ice: { finesse: 1 }, storm: { will: 1 }, earth: { might: 1 }, void: { will: 1 },
+    };
+    const add = map[elementKey] || {};
+    for (const k of Object.keys(add)) s[k] = (s[k] || 0) + add[k];
+  }
+
+  // Cross-training = flexibility, less raw
+  if (crossKey) { s.wits += 1; s.finesse += 1; s.might -= 1; }
+
+  s.might = clamp(s.might || 0, -1, 6);
+  s.finesse = clamp(s.finesse || 0, -1, 6);
+  s.wits = clamp(s.wits || 0, -1, 6);
+  s.will = clamp(s.will || 0, -1, 6);
+  return s;
+}
+
+function titleFromBuild(weaponKey, styleKey, elementKey, crossStyle) {
+  const weapon = WEAPONS.find((w) => w.key === weaponKey)?.name || "";
+  const style = WEAPONS.flatMap((w) => w.styles).find((s) => s.key === styleKey)?.name || "";
+  const el = ELEMENTS.find((e) => e.key === elementKey)?.name || "";
+
+  if (!weaponKey) return "Unbound";
+  if (!styleKey) return weapon;
+
+  if (crossStyle) {
+    const crossName = WEAPONS.flatMap((w) => w.styles).find((s) => s.key === crossStyle)?.name || "Cross";
+    return `${weapon} ${style} • ${crossName}`;
+  }
+
+  if (elementKey) {
+    const base = `${el}${weapon}`;
+    const suffixMap = {
+      Guard: "Sentinel", Edge: "Duelist", Fury: "Reaver",
+      Sniper: "Marksman", Skirmisher: "Rover", Trapper: "Warden",
+      Invoker: "Invoker", Binder: "Binder", Channeler: "Channeler",
+    };
+    return `${base} ${suffixMap[style] || "Adept"}`;
+  }
+
+  return `${weapon} ${style}`;
+}
+
+function pickSite(rng) { return SITES[Math.floor(rng() * SITES.length)]; }
+function pickEnemy(rng) { return ENEMIES[Math.floor(rng() * ENEMIES.length)]; }
+
+function createNodeWeb(rng) {
+  // Node web: small branching graph
+  const nodes = [];
+  const edges = [];
+  const types = ["fight", "fight", "fight", "event", "station", "event", "fight"];
+  const coords = [
+    { x: 12, y: 55 }, { x: 28, y: 35 }, { x: 28, y: 75 },
+    { x: 48, y: 25 }, { x: 50, y: 55 }, { x: 48, y: 85 }, { x: 74, y: 55 },
+  ];
+  for (let i = 0; i < coords.length; i++) {
+    nodes.push({ id: `n${i}`, ...coords[i], kind: types[i], revealed: i === 0, cleared: false, site: pickSite(rng) });
+  }
+  const links = [
+    ["n0","n1"], ["n0","n2"],
+    ["n1","n3"], ["n1","n4"],
+    ["n2","n4"], ["n2","n5"],
+    ["n3","n6"], ["n4","n6"], ["n5","n6"],
+  ];
+  for (const [a,b] of links) edges.push({ a, b });
+  return { nodes, edges };
+}
+
+function rollCheck(rng, label, statBonus, dr) {
+  const d20 = rollDie(rng, 20);
+  const total = d20 + statBonus;
+  return { label, d20, statBonus, total, dr, success: total >= dr };
+}
+function rollDamage(rng, min, max) { return min + Math.floor(rng() * (max - min + 1)); }
+
+function computeAttackMod(stats, weaponKey) {
+  if (weaponKey === "sword") return stats.might + Math.floor(stats.finesse / 2);
+  if (weaponKey === "bow") return stats.finesse + Math.floor(stats.wits / 2);
+  if (weaponKey === "wand") return stats.will + Math.floor(stats.wits / 2);
+  return 0;
+}
+function computeDefenseMod(stats, styleKey) {
+  let mod = Math.floor((stats.might + stats.will) / 2);
+  if (styleKey === "guard") mod += 1;
+  if (styleKey === "trapper") mod += 1;
+  if (styleKey === "binder") mod += 1;
+  return mod;
+}
+
+function skillListForBuild(weaponKey, styleKey, elementKey, crossStyle) {
+  const base = [];
+  const attackLabel = weaponKey === "bow" ? "Shoot" : weaponKey === "wand" ? "Cast" : "Strike";
+  base.push({ key: "attack", name: attackLabel, kind: "action", desc: "Roll to hit. On success, deal damage." });
+  base.push({ key: "defend", name: "Brace", kind: "action", desc: "Raise defense this round. Reduce damage on hit." });
+  base.push({ key: "maneuver", name: "Maneuver", kind: "action", desc: "Reposition to set up advantage." });
+
+  const specials = {
+    guard: { key: "riposte", name: "Shield-Check", desc: "A controlled shove. Safe, reliable." },
+    edge: { key: "bleed", name: "Open Vein", desc: "Higher damage; risk a bite-back." },
+    fury: { key: "lunge", name: "Lunge", desc: "Big swing; missing hurts." },
+    sniper: { key: "aim", name: "Aim", desc: "Take a breath; next shot hits harder." },
+    skirmisher: { key: "dash", name: "Dash Shot", desc: "Attack and slip away on success." },
+    trapper: { key: "snare", name: "Snare", desc: "Hinder the next enemy attack." },
+    invoker: { key: "bolt", name: "Arc Bolt", desc: "High variance magic strike." },
+    binder: { key: "hex", name: "Hex", desc: "Weaken defenses, then hit." },
+    channeler: { key: "focus", name: "Focus", desc: "Charge power; next roll +2." },
+  };
+  if (styleKey && specials[styleKey]) base.push({ ...specials[styleKey], kind: "action" });
+
+  const elementPassives = {
+    fire: "Fire: crits scorch (+1).",
+    ice: "Ice: maneuvers slow (enemy −1 next roll).",
+    storm: "Storm: once per scene, reroll a d20.",
+    earth: "Earth: Brace reduces +1 extra damage.",
+    void: "Void: when low HP, +1 to Will rolls.",
+  };
+  if (elementKey) base.push({ key: `passive_${elementKey}`, name: "Affinity", kind: "passive", desc: elementPassives[elementKey] });
+
+  if (crossStyle) {
+    const crossName = WEAPONS.flatMap((w) => w.styles).find((s) => s.key === crossStyle)?.name || "Cross";
+    base.push({ key: "cross", name: "Cross-Training", kind: "passive", desc: `You carry a slice of ${crossName}.` });
+  }
+  return base;
+}
+
+function mkNewGame(seed = Date.now()) {
+  const gameId = uid();
+  const rngSeed = (seed ^ gameId.length) >>> 0;
+  return {
+    version: VERSION,
+    gameId,
+    rngSeed,
+    phase: "start", // start | chooseStyle | play | dead
+    book: { chapter: 1, page: 1 },
+    meta: { echoes: 0, legacy: { startHP: 0, revealHints: 0 } },
+    player: {
+      name: "",
+      weapon: null,
+      style: null,
+      element: null,
+      crossStyle: null,
+      baseStats: { might: 0, finesse: 0, wits: 0, will: 0 },
+      stats: { might: 0, finesse: 0, wits: 0, will: 0 },
+      hpMax: 10,
+      hp: 10,
+      gold: 0,
+      xp: 0,
+      promoTier: 0,   // 0=weapon+style only, 1=affinity/cross unlocked
+      nextPromoAt: 4, // first promotion unlock threshold
+      inventory: [],
+      extracted: [],
+      stationBuilt: 0,
+      title: "Unbound",
+    },
+    run: {
+      depth: 0,
+      region: "Ember March",
+      nodeWeb: null,
+      currentNodeId: null,
+      site: null,
+      danger: null,
+      inCombat: false,
+      enemy: null,
+      enemyHP: 0,
+      log: [],
+    },
+    ui: {
+      showClassTree: true,
+      showPromotion: false,
+      selectedNode: null,
+    },
+  };
+}
+
+function pushLog(state, entry) {
+  const line = { id: uid(), t: Date.now(), ...entry };
+  state.run.log = [line, ...state.run.log].slice(0, 140);
+}
+
+function Card({ title, subtitle, children, right }) {
+  return (
+    <div className="rounded-2xl bg-white/5 border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+      <div className="px-4 py-3 border-b border-white/10 flex items-start justify-between gap-3">
+        <div>
+          <div className="text-lg font-semibold tracking-tight">{title}</div>
+          {subtitle ? <div className="text-sm text-white/70 mt-0.5">{subtitle}</div> : null}
+        </div>
+        {right ? <div className="shrink-0">{right}</div> : null}
+      </div>
+      <div className="p-4">{children}</div>
+    </div>
+  );
+}
+function Pill({ children }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs bg-white/10 border border-white/10">
+      {children}
+    </span>
+  );
+}
+function Button({ children, onClick, variant = "primary", disabled, title }) {
+  const base = "rounded-xl px-3 py-2 text-sm font-medium border transition active:scale-[0.99]";
+  const styles = {
+    primary: "bg-white text-black border-white/20 hover:bg-white/90 disabled:opacity-50",
+    ghost: "bg-white/5 text-white border-white/10 hover:bg-white/10 disabled:opacity-50",
+    danger: "bg-red-500/15 text-red-200 border-red-500/30 hover:bg-red-500/20 disabled:opacity-50",
+  };
+  return (
+    <button className={`${base} ${styles[variant]}`} onClick={onClick} disabled={disabled} title={title}>
+      {children}
+    </button>
+  );
+}
+function Divider() { return <div className="h-px bg-white/10 my-3" />; }
+
+export default function DragonfallMountainExilePreview() {
+  const [state, setState] = useState(() => mkNewGame());
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+
+  const weaponObj = useMemo(() => WEAPONS.find((w) => w.key === state.player.weapon) || null, [state.player.weapon]);
+  const styleObj = useMemo(
+    () => WEAPONS.flatMap((w) => w.styles).find((s) => s.key === state.player.style) || null,
+    [state.player.style]
+  );
+  const elementObj = useMemo(() => ELEMENTS.find((e) => e.key === state.player.element) || null, [state.player.element]);
+
+  const skills = useMemo(
+    () => skillListForBuild(state.player.weapon, state.player.style, state.player.element, state.player.crossStyle),
+    [state.player.weapon, state.player.style, state.player.element, state.player.crossStyle]
+  );
+
+  const showToast = (msg) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2200);
+  };
+
+  const recalcPlayer = (draft) => {
+    const w = WEAPONS.find((x) => x.key === draft.player.weapon);
+    const bias = w?.bias || { might: 0, finesse: 0, wits: 0, will: 0 };
+    draft.player.stats = computeStats(
+      draft.player.baseStats,
+      bias,
+      draft.player.style,
+      draft.player.element,
+      draft.player.crossStyle
+    );
+    const hpBase = 10 + (draft.meta.legacy.startHP || 0);
+    draft.player.hpMax = hpBase;
+    draft.player.hp = clamp(draft.player.hp, 0, hpBase);
+    draft.player.title = titleFromBuild(draft.player.weapon, draft.player.style, draft.player.element, draft.player.crossStyle);
+  };
+
+  const saveGame = () => {
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); showToast("Saved."); }
+    catch { showToast("Save failed."); }
+  };
+  const loadGame = () => {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) return showToast("No save found.");
+      const parsed = JSON.parse(raw);
+      if (!parsed?.version) return showToast("Save invalid.");
+      setState(parsed);
+      showToast("Loaded.");
+    } catch { showToast("Load failed."); }
+  };
+  const clearSave = () => { try { localStorage.removeItem(SAVE_KEY); showToast("Save cleared."); } catch { showToast("Could not clear."); } };
+
+  const hardReset = () => {
+    const next = mkNewGame(Date.now());
+    next.meta = state.meta; // carry meta
+    next.player.hpMax = 10 + (next.meta.legacy.startHP || 0);
+    next.player.hp = next.player.hpMax;
+    pushLog(next, { type: "system", text: "New run started." });
+    setState(next);
+    showToast("New run.");
+  };
+
+  useEffect(() => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      pushLog(draft, { type: "story", text: "Dragons rule the skies. Cities survive as beacons. The Mountain Expanse pays in blood and salvage." });
+      pushLog(draft, { type: "story", text: "Promotions require XP. Only extracted items endure." });
+      return draft;
+    });
+  }, []);
+
+  const chooseWeapon = (weaponKey) => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      draft.player.weapon = weaponKey;
+      recalcPlayer(draft);
+      draft.phase = "chooseStyle";
+      pushLog(draft, { type: "system", text: `Armament chosen: ${weaponKey.toUpperCase()}.` });
+      return draft;
+    });
+  };
+
+  const chooseStyle = (styleKey) => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      draft.player.style = styleKey;
+      recalcPlayer(draft);
+
+      // Start run: no element/cross yet. Earn it via XP.
+      draft.phase = "play";
+      draft.run.depth = 1;
+
+      const localRng = mulberry32(draft.rngSeed ^ 0xabc);
+      draft.run.nodeWeb = createNodeWeb(localRng);
+      draft.run.currentNodeId = "n0";
+      const startNode = draft.run.nodeWeb.nodes.find((n) => n.id === "n0");
+      draft.run.site = startNode?.site || pickSite(localRng);
+      draft.run.danger = "unknown";
+
+      pushLog(draft, { type: "system", text: `Style chosen: ${styleKey.toUpperCase()}.` });
+      pushLog(draft, { type: "story", text: "You are torn into light. Then—cold stone, thin air, and the smell of ash." });
+      pushLog(draft, { type: "story", text: `You arrive in the ${draft.run.region}. The map blooms like a wound.` });
+      return draft;
+    });
+  };
+
+  const ensureEncounter = () => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      if (draft.run.inCombat) return prev;
+      const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0xdead);
+      const enemy = pickEnemy(localRng);
+      draft.run.inCombat = true;
+      draft.run.enemy = { ...enemy };
+      draft.run.enemyHP = enemy.hp;
+      pushLog(draft, { type: "story", text: `⚔️ ${enemy.name} appears. ${enemy.desc}` });
+      return draft;
+    });
+  };
+
+  const takeDamage = (draft, amount, reason) => {
+    draft.player.hp = clamp(draft.player.hp - amount, 0, draft.player.hpMax);
+    pushLog(draft, { type: "system", text: `You take ${amount} damage (${reason}).` });
+    if (draft.player.hp <= 0) {
+      draft.phase = "dead";
+      const echoes = 2 + draft.run.depth + Math.floor(draft.player.gold / 3);
+      draft.meta.echoes += echoes;
+      pushLog(draft, { type: "story", text: "☠️ You fall. The mountain keeps what you failed to extract." });
+      pushLog(draft, { type: "system", text: `You gain ${echoes} Echoes at the Beacon.` });
+    }
+  };
+
+  const enemyTurn = (draft, context = "combat") => {
+    const enemy = draft.run.enemy;
+    if (!enemy) return;
+
+    const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0x1111 ^ draft.run.enemyHP);
+    const defMod = computeDefenseMod(draft.player.stats, draft.player.style);
+    const defendActive = !!draft.run._defendActive;
+    const braceBonus = defendActive ? 2 : 0;
+
+    const check = rollCheck(localRng, `${enemy.name} attacks`, defMod + braceBonus, enemy.attackDR);
+    pushLog(draft, { type: "roll", text: `${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "HIT" : "MISS"}` });
+
+    if (check.success) {
+      let dmg = rollDamage(localRng, enemy.dmg[0], enemy.dmg[1]);
+      if (defendActive) dmg = Math.max(0, dmg - 1 - (draft.player.element === "earth" ? 1 : 0));
+      takeDamage(draft, dmg, context);
+    } else {
+      pushLog(draft, { type: "system", text: "You avoid the blow." });
+    }
+    draft.run._defendActive = false;
+  };
+
+  const endCombatWin = (draft) => {
+    const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0xbeef);
+    const lootPick = draft.run.site?.loot ? draft.run.site.loot[Math.floor(localRng() * draft.run.site.loot.length)] : "Scrap";
+    draft.player.inventory.push(lootPick);
+    draft.player.gold += 1 + Math.floor(localRng() * 3);
+
+    const xpGain = 2;
+    draft.player.xp += xpGain;
+
+    draft.run.inCombat = false;
+    draft.run.enemy = null;
+    draft.run.enemyHP = 0;
+    draft.run.danger = "cleared";
+
+    // mark node cleared
+    const node = draft.run.nodeWeb?.nodes.find((n) => n.id === draft.run.currentNodeId);
+    if (node) node.cleared = true;
+
+    pushLog(draft, { type: "system", text: `Victory. Loot gained: ${lootPick}. +${xpGain} XP.` });
+
+    // Promotion unlock
+    if (draft.player.promoTier === 0 && draft.player.xp >= draft.player.nextPromoAt) {
+      draft.ui.showPromotion = true;
+      pushLog(draft, { type: "story", text: "Something in you shifts. A new discipline is ready to bind." });
+    }
+  };
+
+  const choosePromotionElement = (elementKey) => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      draft.player.element = elementKey;
+      draft.player.crossStyle = null;
+      draft.player.promoTier = 1;
+      draft.ui.showPromotion = false;
+      recalcPlayer(draft);
+      pushLog(draft, { type: "system", text: `Promotion: Affinity ${elementKey.toUpperCase()}.` });
+      return draft;
+    });
+  };
+
+  const choosePromotionCross = (crossStyleKey) => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      draft.player.crossStyle = crossStyleKey;
+      draft.player.element = null;
+      draft.player.promoTier = 1;
+      draft.ui.showPromotion = false;
+      recalcPlayer(draft);
+      pushLog(draft, { type: "system", text: `Promotion: Cross-Training ${crossStyleKey.toUpperCase()}.` });
+      return draft;
+    });
+  };
+
+  const moveToNode = (nodeId) => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      const web = draft.run.nodeWeb;
+      if (!web) return prev;
+
+      const current = draft.run.currentNodeId;
+      if (current === nodeId) return prev;
+
+      const adjacent = web.edges.some((e) => (e.a === current && e.b === nodeId) || (e.b === current && e.a === nodeId));
+      if (!adjacent) { pushLog(draft, { type: "system", text: "You cannot reach that node from here." }); return draft; }
+
+      draft.run.currentNodeId = nodeId;
+      const node = web.nodes.find((n) => n.id === nodeId);
+      if (node) {
+        draft.run.site = node.site;
+        draft.run.depth += 1;
+
+        // reveal neighbors
+        for (const e of web.edges) {
+          if (e.a === nodeId) web.nodes.find((x) => x.id === e.b) && (web.nodes.find((x) => x.id === e.b).revealed = true);
+          if (e.b === nodeId) web.nodes.find((x) => x.id === e.a) && (web.nodes.find((x) => x.id === e.a).revealed = true);
+        }
+
+        draft.run.danger = node.kind === "fight" ? "unknown" : "cleared";
+        pushLog(draft, { type: "story", text: `You move to: ${node.site.name}.` });
+        pushLog(draft, { type: "story", text: node.site.tone });
+
+        if (node.kind === "station") pushLog(draft, { type: "system", text: "A dormant relay sits here. You may Extract." });
+      }
+      return draft;
+    });
+  };
+
+  const rest = () => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0x3333 ^ Date.now());
+      const heal = 2;
+      draft.player.hp = clamp(draft.player.hp + heal, 0, draft.player.hpMax);
+      pushLog(draft, { type: "system", text: `You rest (+${heal} HP).` });
+      if (localRng() < 0.5) ensureEncounter(); else pushLog(draft, { type: "story", text: "The wind passes. No footsteps." });
+      return draft;
+    });
+  };
+
+  const buildStation = () => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      const idx = draft.player.inventory.indexOf("Relay Parts");
+      if (idx === -1) { pushLog(draft, { type: "system", text: "You lack Relay Parts to build a Drop Station." }); return draft; }
+      draft.player.inventory.splice(idx, 1);
+      draft.player.stationBuilt += 1;
+      pushLog(draft, { type: "story", text: "You assemble a crude Drop Station. A faint ward flickers to life." });
+      pushLog(draft, { type: "system", text: "You can now Extract here." });
+      return draft;
+    });
+  };
+
+  const extract = () => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      const items = draft.player.inventory.splice(0);
+      draft.player.extracted.push(...items);
+      pushLog(draft, { type: "system", text: `Extraction complete. Saved ${items.length} item(s).` });
+      return draft;
+    });
+  };
+
+  const combatAction = (key) => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      if (draft.phase !== "play" || !draft.run.inCombat || !draft.run.enemy) return prev;
+
+      const enemy = draft.run.enemy;
+      const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0x2222 ^ Date.now());
+
+      const atkMod = computeAttackMod(draft.player.stats, draft.player.weapon);
+      const defMod = computeDefenseMod(draft.player.stats, draft.player.style);
+
+      const doAttack = (label, bonus, dmgMin, dmgMax, onMiss) => {
+        const check = rollCheck(localRng, label, atkMod + bonus, enemy.dr);
+        pushLog(draft, { type: "roll", text: `${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
+
+        if (check.success) {
+          let dmg = rollDamage(localRng, dmgMin, dmgMax);
+          if (check.d20 === 20) {
+            dmg += 1;
+            if (draft.player.element === "fire") dmg += 1;
+            pushLog(draft, { type: "system", text: "Critical impact." });
+          }
+          draft.run.enemyHP = Math.max(0, draft.run.enemyHP - dmg);
+          pushLog(draft, { type: "system", text: `Enemy takes ${dmg} damage.` });
+          if (draft.run.enemyHP <= 0) { endCombatWin(draft); return; }
+        } else {
+          if (onMiss) onMiss();
+        }
+        if (draft.phase !== "dead") enemyTurn(draft, "combat");
+      };
+
+      if (key === "attack") { doAttack("You attack", 0, 1, 3); return draft; }
+
+      if (key === "defend") {
+        draft.run._defendActive = true;
+        pushLog(draft, { type: "system", text: `You Brace (Defense mod ${fmtBonus(defMod)}).` });
+        enemyTurn(draft, "brace");
+        return draft;
+      }
+
+      if (key === "maneuver") {
+        const check = rollCheck(localRng, "You Maneuver", draft.player.stats.wits + draft.player.stats.finesse, DR.standard);
+        pushLog(draft, { type: "roll", text: `${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
+        if (check.success) pushLog(draft, { type: "system", text: "You gain Advantage (preview effect flavor-only for now)." });
+        else takeDamage(draft, 1, "misstep");
+        if (draft.phase !== "dead") enemyTurn(draft, "counter");
+        return draft;
+      }
+
+      // Style specials
+      if (key === "aim") { pushLog(draft, { type: "system", text: "You Aim. (Preview: +2 baked into this shot.)" }); doAttack("Aimed Shot", 2, 1, 4); return draft; }
+      if (key === "dash") {
+        const check = rollCheck(localRng, "Dash Shot", atkMod + 1, enemy.dr);
+        pushLog(draft, { type: "roll", text: `${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
+        if (check.success) {
+          const dmg = rollDamage(localRng, 1, 3);
+          draft.run.enemyHP = Math.max(0, draft.run.enemyHP - dmg);
+          pushLog(draft, { type: "system", text: `Enemy takes ${dmg} damage.` });
+          if (draft.run.enemyHP <= 0) { endCombatWin(draft); return draft; }
+          pushLog(draft, { type: "system", text: "You slip out of reach. No retaliation." });
+          return draft;
+        }
+        enemyTurn(draft, "dash-fail");
+        return draft;
+      }
+      if (key === "snare") { pushLog(draft, { type: "system", text: "You set a Snare. Enemy Attack DR +2 once." }); const old = enemy.attackDR; enemy.attackDR = old + 2; enemyTurn(draft, "snare"); enemy.attackDR = old; return draft; }
+      if (key === "bolt") { doAttack("Arc Bolt", 1, 1, 5); return draft; }
+      if (key === "hex") { const old = enemy.dr; enemy.dr = Math.max(8, enemy.dr - 2); pushLog(draft, { type: "system", text: "Hex: Enemy DR −2 this turn." }); doAttack("Hexed Strike", 0, 1, 2); enemy.dr = old; return draft; }
+      if (key === "focus") { pushLog(draft, { type: "system", text: "You Focus. (Preview: +2 baked into next cast.)" }); doAttack("Focused Cast", 2, 1, 4); return draft; }
+      if (key === "riposte") { doAttack("Shield-Check", 0, 1, 2); return draft; }
+      if (key === "bleed") { doAttack("Open Vein", 0, 2, 4, () => takeDamage(draft, 1, "overextension")); return draft; }
+      if (key === "lunge") { doAttack("Lunge", 1, 2, 5, () => takeDamage(draft, 2, "exposed")); return draft; }
+
+      return draft;
+    });
+  };
+
+  const reviveToStart = () => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      if (draft.phase !== "dead") return draft;
+      const next = mkNewGame(Date.now());
+      next.meta = draft.meta;
+      next.player.hpMax = 10 + (next.meta.legacy.startHP || 0);
+      next.player.hp = next.player.hpMax;
+      pushLog(next, { type: "system", text: "You wake at the Beacon. The mountain waits." });
+      return next;
+    });
+  };
+
+  const metaSpend = (key, cost, apply) => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      if (draft.meta.echoes < cost) { pushLog(draft, { type: "system", text: "Not enough Echoes." }); return draft; }
+      draft.meta.echoes -= cost;
+      apply(draft);
+      pushLog(draft, { type: "system", text: `Beacon upgraded: ${key}.` });
+      return draft;
+    });
+  };
+
+  const currentNode = state.run.nodeWeb?.nodes.find((n) => n.id === state.run.currentNodeId);
+  const canExtractHere =
+    state.player.stationBuilt > 0 ||
+    state.run.site?.key === "ruined_relay" ||
+    currentNode?.kind === "station";
+
+  // Auto-trigger encounter when entering fight nodes
+  useEffect(() => {
+    if (state.phase !== "play") return;
+    if (state.run.inCombat) return;
+    if (state.run.danger === "unknown" && currentNode?.kind === "fight") {
+      ensureEncounter();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.run.currentNodeId, state.run.danger, state.phase]);
+
+  return (
+    <div className="min-h-screen bg-[radial-gradient(80%_60%_at_50%_0%,rgba(124,58,237,0.28),rgba(0,0,0,0)),radial-gradient(70%_60%_at_20%_20%,rgba(14,165,233,0.18),rgba(0,0,0,0)),linear-gradient(to_bottom,rgba(0,0,0,1),rgba(9,9,11,1))] text-white">
+      <div className="max-w-6xl mx-auto p-4 md:p-6">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <div className="text-sm text-white/60">DRAGONFALL • Mountain Exile • v{VERSION}</div>
+            <div className="text-3xl md:text-4xl font-semibold tracking-tight">Arcane Run Preview</div>
+            <div className="text-white/70 mt-1">node web • lethal dice • XP promotions • extract-only loot</div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={saveGame} variant="ghost">Save</Button>
+            <Button onClick={loadGame} variant="ghost">Load</Button>
+            <Button onClick={clearSave} variant="ghost">Clear Save</Button>
+            <Button onClick={hardReset} variant="danger">New Run</Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mt-5">
+          <div className="lg:col-span-8 flex flex-col gap-4">
+            <Card
+              title={`Chapter ${state.book.chapter} • Page ${state.book.page}`}
+              subtitle={state.phase === "dead" ? "☠️ Fallen" : state.phase === "play" ? "In the Mountain" : "Preparation"}
+              right={
+                <div className="flex gap-2 flex-wrap justify-end">
+                  <Pill>HP {state.player.hp}/{state.player.hpMax}</Pill>
+                  <Pill>XP {state.player.xp}</Pill>
+                  <Pill>Echoes {state.meta.echoes}</Pill>
+                  <Pill>Gold {state.player.gold}</Pill>
+                </div>
+              }
+            >
+              {state.phase !== "play" ? (
+                <div className="space-y-3">
+                  <div className="text-white/80 leading-relaxed">
+                    Dragons own the sky. Cities endure as beacons. You will be cast into the Mountain Expanse.
+                    <span className="text-white font-semibold"> Promotions require XP.</span> Only extracted goods endure.
+                  </div>
+
+                  {state.ui.showClassTree ? (
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="font-semibold">Class Lattice (visual)</div>
+                          <div className="text-sm text-white/70">Weapon → Style → (Earn XP) → Element OR Cross → Titles</div>
+                        </div>
+                        <Button variant="ghost" onClick={() => setState((p) => ({ ...p, ui: { ...p.ui, showClassTree: false } }))}>
+                          Hide
+                        </Button>
+                      </div>
+                      <div className="mt-3">
+                        <svg viewBox="0 0 100 48" className="w-full h-36">
+                          <defs>
+                            <linearGradient id="g" x1="0" x2="1">
+                              <stop offset="0" stopColor="rgba(124,58,237,0.85)" />
+                              <stop offset="1" stopColor="rgba(14,165,233,0.75)" />
+                            </linearGradient>
+                          </defs>
+                          <path d="M10 24 C 24 10, 34 10, 46 16" stroke="url(#g)" strokeWidth="1.5" fill="none" opacity="0.8" />
+                          <path d="M10 24 C 24 38, 34 38, 46 32" stroke="url(#g)" strokeWidth="1.5" fill="none" opacity="0.8" />
+                          <path d="M46 16 L 70 12" stroke="url(#g)" strokeWidth="1.5" opacity="0.8" />
+                          <path d="M46 16 L 70 22" stroke="url(#g)" strokeWidth="1.5" opacity="0.8" />
+                          <path d="M46 32 L 70 26" stroke="url(#g)" strokeWidth="1.5" opacity="0.8" />
+                          <path d="M46 32 L 70 36" stroke="url(#g)" strokeWidth="1.5" opacity="0.8" />
+                          <path d="M70 12 L 90 18" stroke="url(#g)" strokeWidth="1.5" opacity="0.8" />
+                          <path d="M70 36 L 90 30" stroke="url(#g)" strokeWidth="1.5" opacity="0.8" />
+
+                          {[
+                            { x: 4, y: 18, w: 12, h: 12, t: "Weapon" },
+                            { x: 40, y: 10, w: 14, h: 12, t: "Style" },
+                            { x: 40, y: 26, w: 14, h: 12, t: "Style" },
+                            { x: 64, y: 6, w: 12, h: 12, t: "Element" },
+                            { x: 64, y: 20, w: 12, h: 12, t: "Cross" },
+                            { x: 64, y: 30, w: 12, h: 12, t: "Cross" },
+                            { x: 84, y: 14, w: 12, h: 12, t: "Title" },
+                            { x: 84, y: 26, w: 12, h: 12, t: "Title" },
+                          ].map((b, i) => (
+                            <g key={i}>
+                              <rect x={b.x} y={b.y} width={b.w} height={b.h} rx="3"
+                                fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.18)" />
+                              <text x={b.x + b.w / 2} y={b.y + 8} textAnchor="middle" fontSize="6" fill="rgba(255,255,255,0.85)">
+                                {b.t}
+                              </text>
+                            </g>
+                          ))}
+                        </svg>
+                      </div>
+                      <div className="text-xs text-white/60">
+                        First promotion unlocks at <span className="text-white font-semibold">{state.player.nextPromoAt} XP</span>.
+                      </div>
+                    </div>
+                  ) : (
+                    <Button variant="ghost" onClick={() => setState((p) => ({ ...p, ui: { ...p.ui, showClassTree: true } }))}>
+                      Show Class Lattice
+                    </Button>
+                  )}
+
+                  {state.phase === "start" ? (
+                    <div className="space-y-3">
+                      <div className="text-sm text-white/60">Choose your starting weapon.</div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {WEAPONS.map((w) => (
+                          <button
+                            key={w.key}
+                            onClick={() => chooseWeapon(w.key)}
+                            className={`rounded-2xl p-4 border text-left transition hover:bg-white/5 ${
+                              state.player.weapon === w.key ? "border-white/40 bg-white/5" : "border-white/10"
+                            }`}
+                          >
+                            <div className="text-lg font-semibold">{w.name}</div>
+                            <div className="text-sm text-white/70 mt-1">{w.tagline}</div>
+                            <div className="text-xs text-white/60 mt-3">
+                              Bias: Might {fmtBonus(w.bias.might)} • Finesse {fmtBonus(w.bias.finesse)} • Wits {fmtBonus(w.bias.wits)} • Will {fmtBonus(w.bias.will)}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {state.phase === "chooseStyle" ? (
+                    <div className="space-y-3">
+                      <div className="text-sm text-white/60">Choose your weapon style.</div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {weaponObj?.styles.map((s) => (
+                          <button
+                            key={s.key}
+                            onClick={() => chooseStyle(s.key)}
+                            className="rounded-2xl p-4 border text-left transition hover:bg-white/5 border-white/10"
+                          >
+                            <div className="text-lg font-semibold">{s.name}</div>
+                            <div className="text-sm text-white/70 mt-1">{s.desc}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {state.phase === "dead" ? (
+                    <div className="space-y-4">
+                      <div className="text-white/80 leading-relaxed">
+                        You are dead. The Beacon collects Echoes.
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="rounded-2xl border border-white/10 p-4">
+                          <div className="font-semibold">Beacon Upgrades</div>
+                          <div className="text-xs text-white/60 mt-1">Account-wide.</div>
+                          <Divider />
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="text-sm font-medium">Start HP +1</div>
+                                <div className="text-xs text-white/60">Cost: 6 Echoes</div>
+                              </div>
+                              <Button variant="ghost" onClick={() => metaSpend("Start HP +1", 6, (d) => { d.meta.legacy.startHP += 1; })}>
+                                Buy
+                              </Button>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="text-sm font-medium">Reveal Hints +1</div>
+                                <div className="text-xs text-white/60">Cost: 4 Echoes</div>
+                              </div>
+                              <Button variant="ghost" onClick={() => metaSpend("Reveal Hints +1", 4, (d) => { d.meta.legacy.revealHints += 1; })}>
+                                Buy
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 p-4">
+                          <div className="font-semibold">Run Summary</div>
+                          <Divider />
+                          <div className="text-sm text-white/70">Depth reached: <span className="font-semibold text-white">{state.run.depth}</span></div>
+                          <div className="text-sm text-white/70 mt-1">XP earned: <span className="font-semibold text-white">{state.player.xp}</span></div>
+                          <div className="text-sm text-white/70 mt-1">Extracted items: <span className="font-semibold text-white">{state.player.extracted.length}</span></div>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 p-4">
+                          <div className="font-semibold">Return</div>
+                          <div className="text-sm text-white/70 mt-1">Begin a new run with Beacon upgrades.</div>
+                          <Divider />
+                          <Button onClick={reviveToStart}>Wake at the Beacon</Button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Pill>Title: {state.player.title}</Pill>
+                    <Pill>Weapon: {weaponObj?.name}</Pill>
+                    <Pill>Style: {styleObj?.name}</Pill>
+                    {elementObj ? <Pill>Affinity: {elementObj.name}</Pill> : null}
+                    {state.player.crossStyle ? <Pill>Cross: {WEAPONS.flatMap(w => w.styles).find(s => s.key === state.player.crossStyle)?.name}</Pill> : null}
+                    <Pill>Depth: {state.run.depth}</Pill>
+                    <Pill>Promo: {state.player.promoTier}/?</Pill>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 p-4 bg-white/5">
+                    <div className="text-lg font-semibold">{state.run.site?.name}</div>
+                    <div className="text-sm text-white/70 mt-1">{state.run.site?.tone}</div>
+
+                    {state.run.inCombat && state.run.enemy ? (
+                      <div className="mt-3 flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold">⚔️ {state.run.enemy.name}</div>
+                          <div className="text-xs text-white/60">Enemy DR {state.run.enemy.dr} • Attack DR {state.run.enemy.attackDR}</div>
+                        </div>
+                        <div className="text-lg font-semibold">HP {state.run.enemyHP}/{state.run.enemy.hp}</div>
+                      </div>
+                    ) : (
+                      <div className="mt-3 text-sm text-white/60">
+                        {currentNode?.kind === "fight" ? "A threat lurks here." : "This node is quiet… for now."}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-2xl border border-white/10 p-4">
+                      <div className="font-semibold">Map</div>
+                      <div className="text-xs text-white/60 mt-1">Choose your next node. Branch, survive, extract.</div>
+                      <Divider />
+                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                        <svg viewBox="0 0 100 100" className="w-full h-44">
+                          {state.run.nodeWeb?.edges.map((e, i) => {
+                            const a = state.run.nodeWeb.nodes.find((n) => n.id === e.a);
+                            const b = state.run.nodeWeb.nodes.find((n) => n.id === e.b);
+                            if (!a || !b) return null;
+                            const isNear = e.a === state.run.currentNodeId || e.b === state.run.currentNodeId;
+                            return (
+                              <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                                stroke={isNear ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)"} strokeWidth={1.5}/>
+                            );
+                          })}
+                          {state.run.nodeWeb?.nodes.map((n) => {
+                            const isHere = n.id === state.run.currentNodeId;
+                            const fill = n.kind === "fight" ? "rgba(239,68,68,0.22)"
+                              : n.kind === "station" ? "rgba(34,197,94,0.18)"
+                              : "rgba(59,130,246,0.16)";
+                            const stroke = isHere ? "rgba(255,255,255,0.65)" : n.revealed ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.10)";
+                            const opacity = n.revealed ? 1 : 0.3;
+                            return (
+                              <g key={n.id} opacity={opacity}>
+                                <circle cx={n.x} cy={n.y} r={6.5} fill={fill} stroke={stroke} strokeWidth={2} />
+                                {isHere ? <circle cx={n.x} cy={n.y} r={10} fill="none" stroke="rgba(124,58,237,0.6)" strokeWidth={1.5} /> : null}
+                              </g>
+                            );
+                          })}
+                        </svg>
+
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {state.run.nodeWeb?.nodes.filter((n) => n.revealed).map((n) => {
+                            const isHere = n.id === state.run.currentNodeId;
+                            const labelIcon = n.kind === "fight" ? "⚔" : n.kind === "station" ? "⬡" : "✦";
+                            return (
+                              <Button
+                                key={n.id}
+                                variant={isHere ? "primary" : "ghost"}
+                                onClick={() => {
+                                  if (state.run.inCombat) return;
+                                  moveToNode(n.id);
+                                }}
+                                disabled={isHere || state.run.inCombat}
+                                title={n.site.name}
+                              >
+                                {labelIcon} {n.site.name}
+                              </Button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <Divider />
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="ghost" onClick={rest} disabled={state.run.inCombat}>Rest</Button>
+                        <Button variant="ghost" onClick={buildStation} disabled={state.run.inCombat} title="Requires Relay Parts">Build Drop Station</Button>
+                        <Button variant="ghost" onClick={extract} disabled={!canExtractHere || state.run.inCombat} title={canExtractHere ? "Save carried items." : "No station here."}>Extract</Button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 p-4">
+                      <div className="font-semibold">Actions</div>
+                      <div className="text-xs text-white/60 mt-1">Dice decide. Failure is real danger.</div>
+                      <Divider />
+
+                      {state.run.inCombat ? (
+                        <div className="flex flex-wrap gap-2">
+                          <Button onClick={() => combatAction("attack")}>Attack</Button>
+                          <Button variant="ghost" onClick={() => combatAction("defend")}>Brace</Button>
+                          <Button variant="ghost" onClick={() => combatAction("maneuver")}>Maneuver</Button>
+                          {skills
+                            .filter((s) => s.kind === "action" && !["attack","defend","maneuver"].includes(s.key))
+                            .map((s) => (
+                              <Button key={s.key} variant="ghost" onClick={() => combatAction(s.key)}>
+                                {s.name}
+                              </Button>
+                            ))}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-white/70">
+                          Choose a node on the map to advance.
+                          {state.player.promoTier === 0 ? (
+                            <div className="mt-2 text-xs text-white/60">Earn {state.player.nextPromoAt - state.player.xp} more XP to unlock your first promotion.</div>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Card>
+
+            <Card title="Event Log" subtitle="Newest first. Rolls are explicit.">
+              <div className="space-y-2">
+                {state.run.log.length === 0 ? (
+                  <div className="text-white/60 text-sm">No events yet.</div>
+                ) : (
+                  state.run.log.map((l) => (
+                    <div
+                      key={l.id}
+                      className={`rounded-xl border px-3 py-2 text-sm ${
+                        l.type === "roll" ? "border-amber-400/20 bg-amber-500/10"
+                        : l.type === "system" ? "border-white/10 bg-white/5"
+                        : "border-indigo-400/20 bg-indigo-500/10"
+                      }`}
+                    >
+                      <div className="text-white/90">{l.text}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card>
+          </div>
+
+          <div className="lg:col-span-4 flex flex-col gap-4">
+            <Card title="Character" subtitle="Stats, skills, inventory">
+              <div className="flex flex-wrap gap-2">
+                <Pill>HP {state.player.hp}/{state.player.hpMax}</Pill>
+                <Pill>XP {state.player.xp}</Pill>
+                <Pill>Gold {state.player.gold}</Pill>
+              </div>
+              <Divider />
+              <div className="grid grid-cols-2 gap-3">
+                {["might","finesse","wits","will"].map((k) => (
+                  <div key={k} className="rounded-xl border border-white/10 p-3">
+                    <div className="text-xs text-white/60">{k.toUpperCase()}</div>
+                    <div className="text-lg font-semibold">{fmtBonus(state.player.stats[k])}</div>
+                  </div>
+                ))}
+              </div>
+
+              <Divider />
+              <div className="text-sm font-semibold">Skills</div>
+              <div className="space-y-2 mt-2">
+                {skills.map((s) => (
+                  <div key={s.key} className="rounded-xl border border-white/10 p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium">{s.name}</div>
+                      <span className="text-xs text-white/50">{s.kind}</span>
+                    </div>
+                    <div className="text-xs text-white/60 mt-1">{s.desc}</div>
+                  </div>
+                ))}
+              </div>
+
+              <Divider />
+              <div className="text-sm font-semibold">Inventory (carried)</div>
+              <div className="text-sm text-white/70 mt-2">
+                {state.player.inventory.length ? (
+                  <ul className="list-disc pl-5 space-y-1">
+                    {state.player.inventory.map((it, i) => <li key={`${it}-${i}`}>{it}</li>)}
+                  </ul>
+                ) : <div className="text-white/50">Empty.</div>}
+              </div>
+
+              <Divider />
+              <div className="text-sm font-semibold">Extracted (saved)</div>
+              <div className="text-sm text-white/70 mt-2">
+                {state.player.extracted.length ? (
+                  <ul className="list-disc pl-5 space-y-1">
+                    {state.player.extracted.map((it, i) => <li key={`${it}-${i}`}>{it}</li>)}
+                  </ul>
+                ) : <div className="text-white/50">None yet.</div>}
+              </div>
+            </Card>
+
+            <Card title="Help" subtitle="How this preview works">
+              <div className="text-sm text-white/70 leading-relaxed space-y-2">
+                <div><span className="font-semibold text-white">Map:</span> click a revealed node to move.</div>
+                <div><span className="font-semibold text-white">Fights:</span> give loot + XP.</div>
+                <div><span className="font-semibold text-white">Promotion:</span> at 4 XP, choose <span className="font-semibold text-white">Element OR Cross</span>.</div>
+                <div><span className="font-semibold text-white">Extraction:</span> only extracted loot is permanent.</div>
+              </div>
+            </Card>
+          </div>
+        </div>
+      </div>
+
+      {/* Promotion Modal */}
+      {state.phase === "play" && state.ui.showPromotion ? (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4">
+          <div className="max-w-2xl w-full rounded-2xl border border-white/10 bg-zinc-950/80 backdrop-blur p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xl font-semibold">Promotion Unlocked</div>
+                <div className="text-sm text-white/70 mt-1">Choose one: bind an Element, or cross-train a Style.</div>
+              </div>
+              <Button variant="ghost" onClick={() => setState((p) => ({ ...p, ui: { ...p.ui, showPromotion: false } }))}>
+                Later
+              </Button>
+            </div>
+            <Divider />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-white/10 p-4 bg-white/5">
+                <div className="font-semibold">Bind an Element</div>
+                <div className="text-sm text-white/70 mt-1">Sharper identity. Titles evolve.</div>
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  {ELEMENTS.map((e) => (
+                    <Button key={e.key} variant="ghost" onClick={() => choosePromotionElement(e.key)}>
+                      {e.name}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 p-4 bg-white/5">
+                <div className="font-semibold">Cross-Train a Style</div>
+                <div className="text-sm text-white/70 mt-1">More options. Less raw power.</div>
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  {WEAPONS.flatMap((w) => w.styles)
+                    .filter((s) => s.key !== state.player.style)
+                    .slice(0, 8)
+                    .map((s) => (
+                      <Button key={s.key} variant="ghost" onClick={() => choosePromotionCross(s.key)}>
+                        {s.name}
+                      </Button>
+                    ))}
+                </div>
+                <div className="text-xs text-white/50 mt-2">(Preview: curated list for now.)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Toast */}
+      {toast ? (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2">
+          <div className="rounded-full bg-white text-black px-4 py-2 text-sm shadow-xl">{toast}</div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 
       ReactDOM.createRoot(document.getElementById("root")).render(
         React.createElement(DragonfallMountainExilePreview)
