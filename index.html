@@ -8,12 +8,100 @@
     <!-- Tailwind -->
     <script src="https://cdn.tailwindcss.com"></script>
 
+    <!-- Game-ish fonts (CDN, no build step) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Press+Start+2P&display=swap"
+      rel="stylesheet"
+    />
+
     <!-- React (UMD builds) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 
     <!-- Babel so we can run JSX in-browser -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+      :root{
+        --ui-bg: rgba(8,8,10,0.58);
+        --ui-bg2: rgba(12,12,16,0.72);
+        --ui-border: rgba(255,255,255,0.12);
+        --ui-border2: rgba(255,255,255,0.18);
+        --ui-glow: rgba(124,58,237,0.22);
+      }
+      html, body { height:100%; }
+      body { margin:0; }
+
+      /* game frame vibe */
+      .ui-panel{
+        background: linear-gradient(180deg, rgba(20,20,26,0.55), rgba(10,10,14,0.72));
+        border: 1px solid var(--ui-border);
+        box-shadow:
+          0 20px 60px rgba(0,0,0,0.55),
+          0 0 0 1px rgba(255,255,255,0.06) inset,
+          0 0 40px var(--ui-glow);
+        backdrop-filter: blur(10px);
+      }
+      .ui-panel-soft{
+        background: var(--ui-bg);
+        border: 1px solid var(--ui-border);
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset;
+        backdrop-filter: blur(10px);
+      }
+      .ui-title{
+        font-family: Cinzel, serif;
+        letter-spacing: 0.02em;
+      }
+      .ui-runic{
+        font-family: "Press Start 2P", monospace;
+        font-size: 10px;
+        letter-spacing: 0.12em;
+      }
+
+      /* Tooltip */
+      .tt-wrap{ position: relative; display:inline-flex; }
+      .tt{
+        position:absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: calc(100% + 10px);
+        width: min(320px, 72vw);
+        pointer-events:none;
+        opacity:0;
+        transition: opacity 140ms ease, transform 140ms ease;
+        z-index: 99;
+      }
+      .tt-wrap:hover .tt{
+        opacity:1;
+        transform: translateX(-50%) translateY(-2px);
+      }
+      .tt-box{
+        border-radius: 16px;
+        background: rgba(0,0,0,0.65);
+        border: 1px solid rgba(255,255,255,0.12);
+        box-shadow: 0 22px 60px rgba(0,0,0,0.55);
+        padding: 10px 12px;
+      }
+      .tt-arrow{
+        width: 14px; height: 14px;
+        background: rgba(0,0,0,0.65);
+        border-left: 1px solid rgba(255,255,255,0.12);
+        border-bottom: 1px solid rgba(255,255,255,0.12);
+        transform: rotate(-45deg);
+        margin: -7px auto 0 auto;
+      }
+
+      /* Transition overlay */
+      .wipe{
+        animation: wipeIn 220ms ease-out forwards;
+      }
+      @keyframes wipeIn{
+        from{ opacity:0; transform: translateY(6px) scale(0.99); }
+        to{ opacity:1; transform: translateY(0) scale(1); }
+      }
+    </style>
   </head>
 
   <body class="bg-zinc-950">
@@ -23,17 +111,23 @@
       const { useEffect, useMemo, useRef, useState } = React;
 
       // =========================================================
-      // DRAGONFALL: MOUNTAIN EXILE — v0.3
-      // Major upgrade: mode-based game screens, mountain map, region scaling,
-      // safe rests, monster ecology by depth, materials->beacon upgrades.
+      // DRAGONFALL: MOUNTAIN EXILE — v0.4
+      // Wave changes:
+      // - "Game UI" treatment + pixel-art canvas backdrops (generated art)
+      // - Transition cards that summarize what changed (combat, travel, events, menu choices)
+      // - Map uses simple icons for locations
+      // - Hostile action set: Explore (combat/event odds), Stir Up No Good (force combat),
+      //   Rest, Extract, Open Map, Build Beacon
+      // - Hover tooltips show odds + factors
+      // - Random Events: big resource, stat boon, rare borrowed ability, affinity attack
       // =========================================================
-      const VERSION = "0.3.0";
-      const SAVE_KEY = "dragonfall_save_v03";
+      const VERSION = "0.4.0";
+      const SAVE_KEY = "dragonfall_save_v04";
 
       function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
       function uid() { return Math.random().toString(16).slice(2) + Date.now().toString(16); }
 
-      // Deterministic RNG (mulberry32)
+      // Deterministic-ish RNG (mulberry32)
       function mulberry32(seed) {
         let a = seed >>> 0;
         return function () {
@@ -93,7 +187,7 @@
         { key: "void", name: "Void", vibe: "Sacrifice • inversion" },
       ];
 
-      function computeStats(base, weaponBias, styleKey, elementKey, crossKey) {
+      function computeStats(base, weaponBias, styleKey, elementKey, crossKey, runBuff) {
         const s = { ...base };
         for (const k of Object.keys(weaponBias)) s[k] += weaponBias[k];
 
@@ -109,7 +203,11 @@
 
         if (elementKey) {
           const map = {
-            fire: { might: 1 }, ice: { finesse: 1 }, storm: { will: 1 }, earth: { might: 1 }, void: { will: 1 },
+            fire: { might: 1 },
+            ice: { finesse: 1 },
+            storm: { will: 1 },
+            earth: { might: 1 },
+            void: { will: 1 },
           };
           const add = map[elementKey] || {};
           for (const k of Object.keys(add)) s[k] = (s[k] || 0) + add[k];
@@ -118,10 +216,15 @@
         // Cross-training = flexibility, less raw
         if (crossKey) { s.wits += 1; s.finesse += 1; s.might -= 1; }
 
-        s.might = clamp(s.might || 0, -1, 6);
-        s.finesse = clamp(s.finesse || 0, -1, 6);
-        s.wits = clamp(s.wits || 0, -1, 6);
-        s.will = clamp(s.will || 0, -1, 6);
+        // run buffs (from events)
+        if (runBuff) {
+          for (const k of ["might","finesse","wits","will"]) s[k] += (runBuff[k] || 0);
+        }
+
+        s.might = clamp(s.might || 0, -1, 7);
+        s.finesse = clamp(s.finesse || 0, -1, 7);
+        s.wits = clamp(s.wits || 0, -1, 7);
+        s.will = clamp(s.will || 0, -1, 7);
         return s;
       }
 
@@ -151,7 +254,7 @@
       }
 
       // --- Skills (combat buttons) ---
-      function skillListForBuild(weaponKey, styleKey, elementKey, crossStyle) {
+      function skillListForBuild(weaponKey, styleKey, elementKey, crossStyle, extraSkills) {
         const base = [];
         const attackLabel = weaponKey === "bow" ? "Shoot" : weaponKey === "wand" ? "Cast" : "Strike";
         base.push({ key: "attack", name: attackLabel, kind: "action", desc: "Roll to hit. On success, deal damage." });
@@ -184,6 +287,12 @@
           const crossName = WEAPONS.flatMap((w) => w.styles).find((s) => s.key === crossStyle)?.name || "Cross";
           base.push({ key: "cross", name: "Cross-Training", kind: "passive", desc: `You carry a slice of ${crossName}.` });
         }
+
+        // event-granted extra skills
+        if (Array.isArray(extraSkills)) {
+          for (const s of extraSkills) base.push(s);
+        }
+
         return base;
       }
 
@@ -325,16 +434,10 @@
       function isSafeLocation(location, builtBeacons) {
         if (!location) return false;
         if (location.kind === "safe" || location.kind === "beacon") return true;
-        // built beacons can “make a place safe”
         return builtBeacons.includes(location.id);
       }
 
-      // Region names by tier (flavor + difficulty hint)
-      const REGION_NAME = {
-        1: "Outer Slopes",
-        2: "Cinder Valleys",
-        3: "Inner Spires",
-      };
+      const REGION_NAME = { 1: "Outer Slopes", 2: "Cinder Valleys", 3: "Inner Spires" };
 
       function pickEnemyByTier(rng, tier) {
         const pool = ENEMIES.filter(e => e.tier === tier);
@@ -342,8 +445,7 @@
       }
 
       function pickMaterialDrop(rng, tier) {
-        // drops skew upward with tier
-        const pool = MATERIALS.filter(m => m.tier <= tier + 0); // tier1->1, tier2-><=2, tier3-><=3
+        const pool = MATERIALS.filter(m => m.tier <= tier);
         const weighted = [];
         for (const m of pool) {
           const w = 1 + (m.tier === tier ? 2 : 0);
@@ -396,6 +498,24 @@
         },
       ];
 
+      // --- Random events (the “other 60%”) ---
+      const AFFINITY_ATTACKS = [
+        { key:"aff_firebrand", name:"Firebrand", kind:"action", desc:"A scorching strike. Higher damage, small self-burn risk.", tag:"affinity" },
+        { key:"aff_frostbind", name:"Frostbind", kind:"action", desc:"A binding cold. Lower damage, reduces enemy attack.", tag:"affinity" },
+        { key:"aff_thunderlink", name:"Thunderlink", kind:"action", desc:"A quick chain hit. Low damage but accurate.", tag:"affinity" },
+        { key:"aff_stonecoil", name:"Stonecoil", kind:"action", desc:"A crushing ward. Damage + you Brace lightly.", tag:"affinity" },
+        { key:"aff_voidbite", name:"Voidbite", kind:"action", desc:"A hungry cut. Big damage if you're low HP.", tag:"affinity" },
+      ];
+
+      const BORROWED_ABILITIES = [
+        { key:"borrowed_duelist", name:"Borrowed Technique: Duelist", kind:"action", desc:"Once per combat: reroll an attack d20.", tag:"borrowed" },
+        { key:"borrowed_warden", name:"Borrowed Technique: Warden", kind:"action", desc:"Once per combat: negate next enemy hit.", tag:"borrowed" },
+        { key:"borrowed_invoker", name:"Borrowed Technique: Invoker", kind:"action", desc:"Once per combat: add +3 to a roll after seeing d20.", tag:"borrowed" },
+      ];
+
+      // =========================================================
+      // GAME STATE
+      // =========================================================
       function mkNewGame(seed = Date.now()) {
         const gameId = uid();
         const rngSeed = (seed ^ gameId.length) >>> 0;
@@ -405,13 +525,12 @@
           gameId,
           rngSeed,
 
-          // MODE-BASED UI:
           // menu | setup_weapon | setup_style | setup_prologue | map | location | combat | beacon | dead
           mode: "menu",
 
           meta: {
             echoes: 0,
-            bank: { // banked materials (extracted)
+            bank: {
               scaled_fragment: 0,
               bright_glass: 0,
               ward_coil: 0,
@@ -429,21 +548,23 @@
           },
 
           player: {
-            name: "",
             weapon: null,
             style: null,
             element: null,
             crossStyle: null,
+
             baseStats: { might: 0, finesse: 0, wits: 0, will: 0 },
+            runBuff: { might: 0, finesse: 0, wits: 0, will: 0 },  // events
             stats: { might: 0, finesse: 0, wits: 0, will: 0 },
+
             hpMax: 10,
             hp: 10,
             xp: 0,
-            promoTier: 0,   // 0 = before specialization; 1 = element/cross chosen
+            promoTier: 0,
             nextPromoAt: 4,
             title: "Unbound",
 
-            // run materials (unbanked)
+            // in-run materials (unbanked)
             pack: {
               scaled_fragment: 0,
               bright_glass: 0,
@@ -453,37 +574,44 @@
               void_chit: 0,
             },
 
-            // in-run safety
-            builtBeacons: [], // location ids that are now safe
+            builtBeacons: [],
+            extraSkills: [],
+
+            // very rare “once per combat” flags for borrowed skills
+            combatFlags: {},
           },
 
           run: {
             day: 1,
             region: "Ember March",
-            revealedTier: 1, // map visibility
+            revealedTier: 1,
             here: "l_beacon_gate",
             lastHere: null,
 
-            // combat state
             inCombat: false,
             enemy: null,
             enemyHP: 0,
 
-            // small, whisper log
             log: [],
           },
 
-          ui: {
-            toast: null,
-            showPromotion: false,
-            mapPan: { x: 0, y: 0, z: 1 }, // simple map zoom
-          }
+          // transition overlay that summarizes outcomes
+          transition: {
+            open: false,
+            title: "",
+            subtitle: "",
+            bullets: [],
+            lore: "",
+            nextMode: null,
+          },
+
+          ui: { toast: null, showPromotion: false }
         };
       }
 
-      function pushLog(state, entry) {
-        const line = { id: uid(), t: Date.now(), ...entry };
-        state.run.log = [line, ...state.run.log].slice(0, 18); // keep small, recent
+      function pushLog(state, text, type="system") {
+        const line = { id: uid(), t: Date.now(), type, text };
+        state.run.log = [line, ...state.run.log].slice(0, 18);
       }
 
       function recalcPlayer(draft) {
@@ -494,7 +622,8 @@
           bias,
           draft.player.style,
           draft.player.element,
-          draft.player.crossStyle
+          draft.player.crossStyle,
+          draft.player.runBuff
         );
         const hpBase = 10 + (draft.meta.legacy.startHP || 0);
         draft.player.hpMax = hpBase;
@@ -502,7 +631,18 @@
         draft.player.title = titleFromBuild(draft.player.weapon, draft.player.style, draft.player.element, draft.player.crossStyle);
       }
 
-      // --- UI atoms (gamey, not admin) ---
+      function openTransition(draft, payload) {
+        draft.transition.open = true;
+        draft.transition.title = payload.title || "Outcome";
+        draft.transition.subtitle = payload.subtitle || "";
+        draft.transition.bullets = payload.bullets || [];
+        draft.transition.lore = payload.lore || "";
+        draft.transition.nextMode = payload.nextMode || null;
+      }
+
+      // =========================================================
+      // UI ATOMS
+      // =========================================================
       function Pill({ children }) {
         return (
           <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs bg-white/10 border border-white/10">
@@ -510,29 +650,55 @@
           </span>
         );
       }
-      function Button({ children, onClick, variant = "primary", disabled, title }) {
-        const base = "rounded-2xl px-4 py-2 text-sm font-semibold border transition active:scale-[0.99] tracking-wide";
+
+      function Tooltip({ title, lines }) {
+        return (
+          <div className="tt">
+            <div className="tt-box">
+              <div className="text-xs font-semibold text-white/90">{title}</div>
+              <div className="mt-1 space-y-1">
+                {lines.map((l, i) => (
+                  <div key={i} className="text-[11px] text-white/70 leading-snug">{l}</div>
+                ))}
+              </div>
+            </div>
+            <div className="tt-arrow"></div>
+          </div>
+        );
+      }
+
+      function Button({ children, onClick, variant = "primary", disabled, tooltip }) {
+        const base =
+          "rounded-2xl px-4 py-2 text-sm font-semibold border transition active:scale-[0.99] tracking-wide";
         const styles = {
           primary: "bg-white text-black border-white/20 hover:bg-white/90 disabled:opacity-50",
           ghost: "bg-white/5 text-white border-white/10 hover:bg-white/10 disabled:opacity-50",
           danger: "bg-red-500/15 text-red-200 border-red-500/30 hover:bg-red-500/20 disabled:opacity-50",
           gold: "bg-amber-300/15 text-amber-100 border-amber-300/25 hover:bg-amber-300/20 disabled:opacity-50",
         };
+
         return (
-          <button className={`${base} ${styles[variant]}`} onClick={onClick} disabled={disabled} title={title}>
-            {children}
-          </button>
+          <span className="tt-wrap">
+            {tooltip ? <Tooltip title={tooltip.title} lines={tooltip.lines} /> : null}
+            <button
+              className={`${base} ${styles[variant]}`}
+              onClick={onClick}
+              disabled={disabled}
+            >
+              {children}
+            </button>
+          </span>
         );
       }
+
       function Divider() { return <div className="h-px bg-white/10 my-3" />; }
 
       function WhisperLog({ lines }) {
-        // Semi-transparent small ribbon (newest last visually)
         const shown = [...lines].slice(0, 6).reverse();
         return (
           <div className="pointer-events-none absolute bottom-4 left-4 w-[min(520px,calc(100%-2rem))]">
-            <div className="rounded-2xl bg-black/35 border border-white/10 backdrop-blur-md px-3 py-2">
-              <div className="text-[10px] uppercase tracking-[0.22em] text-white/60">Whispers</div>
+            <div className="rounded-2xl ui-panel-soft px-3 py-2">
+              <div className="ui-runic text-white/60">WHISPERS</div>
               <div className="mt-2 space-y-1">
                 {shown.length === 0 ? (
                   <div className="text-xs text-white/50">…</div>
@@ -540,7 +706,6 @@
                   <div key={l.id} className="text-xs text-white/85 leading-snug">
                     <span className={
                       l.type === "roll" ? "text-amber-200" :
-                      l.type === "system" ? "text-white/80" :
                       l.type === "lore" ? "text-indigo-200" :
                       l.type === "danger" ? "text-red-200" :
                       "text-white/85"
@@ -555,23 +720,180 @@
         );
       }
 
-      // --- Backgrounds by mode (simple, effective) ---
-      function Background({ mode }) {
-        const base = "absolute inset-0";
-        const menu = "bg-[radial-gradient(90%_70%_at_50%_0%,rgba(124,58,237,0.26),rgba(0,0,0,0)),radial-gradient(70%_60%_at_20%_20%,rgba(14,165,233,0.16),rgba(0,0,0,0)),linear-gradient(to_bottom,rgba(0,0,0,1),rgba(9,9,11,1))]";
-        const map = "bg-[radial-gradient(70%_60%_at_50%_20%,rgba(34,197,94,0.08),rgba(0,0,0,0)),radial-gradient(70%_60%_at_70%_10%,rgba(124,58,237,0.18),rgba(0,0,0,0)),linear-gradient(to_bottom,rgba(0,0,0,1),rgba(9,9,11,1))]";
-        const combat = "bg-[radial-gradient(70%_60%_at_40%_30%,rgba(239,68,68,0.18),rgba(0,0,0,0)),radial-gradient(70%_60%_at_70%_20%,rgba(124,58,237,0.16),rgba(0,0,0,0)),linear-gradient(to_bottom,rgba(0,0,0,1),rgba(9,9,11,1))]";
-        const beacon = "bg-[radial-gradient(70%_60%_at_50%_25%,rgba(245,158,11,0.14),rgba(0,0,0,0)),radial-gradient(70%_60%_at_20%_10%,rgba(14,165,233,0.14),rgba(0,0,0,0)),linear-gradient(to_bottom,rgba(0,0,0,1),rgba(9,9,11,1))]";
+      // =========================================================
+      // PIXEL ART BACKDROP (generated "real" art)
+      // =========================================================
+      function PixelBackdrop({ mode, seed }) {
+        const ref = useRef(null);
 
-        const cls =
-          mode === "combat" ? combat :
-          mode === "beacon" ? beacon :
-          mode === "map" ? map :
-          menu;
+        useEffect(() => {
+          const canvas = ref.current;
+          if (!canvas) return;
+          const ctx = canvas.getContext("2d", { alpha: true });
 
-        return <div className={`${base} ${cls}`} />;
+          let raf = 0;
+          let t = 0;
+
+          const resize = () => {
+            const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+            canvas.width = Math.floor(canvas.clientWidth * dpr);
+            canvas.height = Math.floor(canvas.clientHeight * dpr);
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          };
+
+          const rng = mulberry32((seed ^ 0xA11CE) >>> 0);
+
+          // palettes by mode
+          const palette = (() => {
+            if (mode === "combat") return {
+              sky: ["#07040A","#140815","#200A1B"],
+              mist:"#1a0f1a",
+              ridge:["#2a1021","#3b1226","#52152a"],
+              glow:"#7c3aed"
+            };
+            if (mode === "beacon") return {
+              sky: ["#04070A","#071019","#0A1A24"],
+              mist:"#0b1822",
+              ridge:["#0b2a2f","#0c3330","#13413b"],
+              glow:"#f59e0b"
+            };
+            if (mode === "map") return {
+              sky: ["#04050a","#070916","#0b0f22"],
+              mist:"#0c1222",
+              ridge:["#0f1a2a","#18203a","#222a4a"],
+              glow:"#22c55e"
+            };
+            return {
+              sky: ["#05050a","#0b0a14","#120c1f"],
+              mist:"#0f0f18",
+              ridge:["#171326","#22183a","#2d1e4d"],
+              glow:"#38bdf8"
+            };
+          })();
+
+          // pixel scale (low-res look)
+          const PIX = 3; // bigger = chunkier
+
+          function draw() {
+            t += 0.006;
+            const w = canvas.clientWidth;
+            const h = canvas.clientHeight;
+
+            // clear
+            ctx.clearRect(0,0,w,h);
+
+            // sky gradient (banded)
+            const bands = 10;
+            for (let i=0;i<bands;i++){
+              const y0 = (i/bands)*h;
+              const y1 = ((i+1)/bands)*h;
+              const c = palette.sky[Math.floor((i/bands)*palette.sky.length)];
+              ctx.fillStyle = c;
+              ctx.fillRect(0, y0, w, (y1-y0)+1);
+            }
+
+            // stars
+            const stars = mode === "combat" ? 30 : 60;
+            ctx.fillStyle = "rgba(255,255,255,0.25)";
+            for (let i=0;i<stars;i++){
+              const x = (rng()*w + (Math.sin(t*0.7+i)*6)) % w;
+              const y = (rng()*h*0.55);
+              const s = (rng()<0.85) ? 1 : 2;
+              ctx.fillRect(Math.floor(x), Math.floor(y), s, s);
+            }
+
+            // moon glow
+            const gx = w*0.72, gy = h*0.22;
+            const grd = ctx.createRadialGradient(gx,gy,0,gx,gy,Math.min(w,h)*0.35);
+            grd.addColorStop(0, `${palette.glow}33`);
+            grd.addColorStop(1, "rgba(0,0,0,0)");
+            ctx.fillStyle = grd;
+            ctx.fillRect(0,0,w,h);
+
+            // mountain layers (pixel ridges)
+            function ridgeLayer(baseY, amp, color, drift, jag) {
+              ctx.fillStyle = color;
+              ctx.beginPath();
+              ctx.moveTo(0, h);
+              ctx.lineTo(0, baseY);
+
+              const step = PIX;
+              for (let x=0;x<=w;x+=step){
+                const n = Math.sin((x*0.01) + t*drift) * amp
+                        + Math.sin((x*0.028) + t*(drift*0.6)) * (amp*0.35)
+                        + (Math.sin((x*0.08)+t*0.4) * jag);
+                const y = baseY + n;
+                ctx.lineTo(x, y);
+              }
+              ctx.lineTo(w, h);
+              ctx.closePath();
+              ctx.fill();
+            }
+
+            ridgeLayer(h*0.62, 22, palette.ridge[0], 0.6, 3);
+            ridgeLayer(h*0.72, 28, palette.ridge[1], 0.35, 4);
+            ridgeLayer(h*0.82, 34, palette.ridge[2], 0.22, 5);
+
+            // mist overlay
+            const mg = ctx.createLinearGradient(0,h*0.35,0,h);
+            mg.addColorStop(0, "rgba(0,0,0,0)");
+            mg.addColorStop(0.55, palette.mist + "66");
+            mg.addColorStop(1, "rgba(0,0,0,0.55)");
+            ctx.fillStyle = mg;
+            ctx.fillRect(0,0,w,h);
+
+            raf = requestAnimationFrame(draw);
+          }
+
+          const onResize = () => { resize(); };
+          window.addEventListener("resize", onResize);
+          resize();
+          draw();
+
+          return () => {
+            cancelAnimationFrame(raf);
+            window.removeEventListener("resize", onResize);
+          };
+        }, [mode, seed]);
+
+        return (
+          <div className="absolute inset-0">
+            <canvas ref={ref} className="w-full h-full block" />
+            <div className="absolute inset-0 bg-[radial-gradient(70%_55%_at_50%_30%,rgba(0,0,0,0),rgba(0,0,0,0.55))]" />
+          </div>
+        );
       }
 
+      // =========================================================
+      // MAP ICONS (simple, gamey)
+      // =========================================================
+      function MapIcon({ kind, safe, active }) {
+        const stroke = active ? "rgba(255,255,255,0.85)" : safe ? "rgba(34,197,94,0.65)" : "rgba(255,255,255,0.35)";
+        const fill = safe ? "rgba(34,197,94,0.16)" : "rgba(124,58,237,0.14)";
+        const inner = (() => {
+          switch(kind){
+            case "beacon": return "⌬";
+            case "safe": return "⌂";
+            case "ruin": return "⟐";
+            case "pass": return "⟁";
+            case "shrine": return "✦";
+            default: return "•";
+          }
+        })();
+
+        return (
+          <g>
+            <circle r="10" fill={fill} stroke={stroke} strokeWidth="2" />
+            <text y="3.5" textAnchor="middle" fontSize="10" fill="rgba(255,255,255,0.78)" style={{fontFamily:"Press Start 2P"}}>
+              {inner}
+            </text>
+          </g>
+        );
+      }
+
+      // =========================================================
+      // MAIN APP
+      // =========================================================
       function DragonfallMountainExilePreview() {
         const [state, setState] = useState(() => mkNewGame());
         const toastTimer = useRef(null);
@@ -583,20 +905,20 @@
         );
         const elementObj = useMemo(() => ELEMENTS.find((e) => e.key === state.player.element) || null, [state.player.element]);
 
-        const skills = useMemo(
-          () => skillListForBuild(state.player.weapon, state.player.style, state.player.element, state.player.crossStyle),
-          [state.player.weapon, state.player.style, state.player.element, state.player.crossStyle]
-        );
-
         const here = useMemo(() => locById(state.run.here), [state.run.here]);
         const hereSafe = useMemo(() => isSafeLocation(here, state.player.builtBeacons), [here, state.player.builtBeacons]);
+
+        const skills = useMemo(
+          () => skillListForBuild(state.player.weapon, state.player.style, state.player.element, state.player.crossStyle, state.player.extraSkills),
+          [state.player.weapon, state.player.style, state.player.element, state.player.crossStyle, state.player.extraSkills]
+        );
 
         const showToast = (msg) => {
           setState((p) => ({ ...p, ui: { ...p.ui, toast: msg }}));
           if (toastTimer.current) clearTimeout(toastTimer.current);
           toastTimer.current = setTimeout(() => {
             setState((p) => ({ ...p, ui: { ...p.ui, toast: null }}));
-          }, 1900);
+          }, 1600);
         };
 
         const saveGame = () => {
@@ -615,32 +937,26 @@
         };
         const clearSave = () => { try { localStorage.removeItem(SAVE_KEY); showToast("Save cleared."); } catch { showToast("Could not clear."); } };
 
-        const hardReset = () => {
-          setState((prev) => {
-            const next = mkNewGame(Date.now());
-            next.meta = prev.meta; // keep meta
-            recalcPlayer(next);
-            pushLog(next, { type: "lore", text: "The Beacon does not judge you. It only counts what you bring back." });
-            return next;
-          });
-          showToast("New exile.");
-        };
-
-        // ---------------------------
-        // STORY + FLOW HELPERS
-        // ---------------------------
         const goMode = (mode) => setState((p) => ({ ...p, mode }));
 
+        // ---------- Setup flow ----------
         const beginNewExile = () => {
           setState((prev) => {
-            const d = structuredClone(prev);
-            // reset run/player, keep meta
             const fresh = mkNewGame(Date.now());
-            fresh.meta = d.meta;
+            fresh.meta = prev.meta; // keep beacon meta
             fresh.mode = "setup_weapon";
             recalcPlayer(fresh);
-            pushLog(fresh, { type: "lore", text: "Dragons own the sky. Cities endure as beacons. You are sent to the Mountain Expanse to return with proof." });
-            pushLog(fresh, { type: "system", text: "Choose your starting armament." });
+            pushLog(fresh, "The Beacon does not bless you. It only records you.", "lore");
+            openTransition(fresh, {
+              title: "New Exile",
+              subtitle: "The light opens its ledger.",
+              bullets: [
+                `Beacon Echoes: ${fresh.meta.echoes}`,
+                `Banked materials: ${Object.values(fresh.meta.bank).reduce((a,b)=>a+b,0)}`,
+              ],
+              lore: "You step forward anyway.",
+              nextMode: "setup_weapon",
+            });
             return fresh;
           });
         };
@@ -651,8 +967,17 @@
             d.player.weapon = weaponKey;
             recalcPlayer(d);
             d.mode = "setup_style";
-            pushLog(d, { type: "system", text: `Armament chosen: ${weaponKey.toUpperCase()}.` });
-            pushLog(d, { type: "lore", text: "In your hands, the tool becomes a vow." });
+            pushLog(d, `Armament chosen: ${weaponKey.toUpperCase()}.`);
+            openTransition(d, {
+              title: "Armament Bound",
+              subtitle: WEAPONS.find(w=>w.key===weaponKey)?.tagline || "",
+              bullets: [
+                `Weapon: ${WEAPONS.find(w=>w.key===weaponKey)?.name}`,
+                `You will specialize after your first blood and XP.`,
+              ],
+              lore: "A tool becomes a vow when the mountain is watching.",
+              nextMode: "setup_style",
+            });
             return d;
           });
         };
@@ -661,18 +986,30 @@
           setState((prev) => {
             const d = structuredClone(prev);
             d.player.style = styleKey;
-            recalcPlayer(d);
-
-            d.mode = "setup_prologue";
-            d.run.here = "l_beacon_gate";
-            d.run.revealedTier = 1 + (d.meta.legacy.revealHints || 0);
-            d.player.promoTier = 0;
-            d.player.xp = 0;
             d.player.element = null;
             d.player.crossStyle = null;
+            d.player.promoTier = 0;
+            d.player.xp = 0;
+            d.player.extraSkills = [];
+            d.player.combatFlags = {};
+            d.player.runBuff = { might:0, finesse:0, wits:0, will:0 };
+            d.run.here = "l_beacon_gate";
+            d.run.revealedTier = 1 + (d.meta.legacy.revealHints || 0);
             d.player.builtBeacons = [];
-
-            pushLog(d, { type: "system", text: `Discipline chosen: ${styleKey.toUpperCase()}.` });
+            recalcPlayer(d);
+            d.mode = "setup_prologue";
+            pushLog(d, `Discipline chosen: ${styleKey.toUpperCase()}.`);
+            openTransition(d, {
+              title: "Discipline Chosen",
+              subtitle: `${WEAPONS.flatMap(w=>w.styles).find(s=>s.key===styleKey)?.name || "Style"}`,
+              bullets: [
+                `Title: ${d.player.title}`,
+                `HP: ${d.player.hp}/${d.player.hpMax}`,
+                `Specialization unlocks at ${d.player.nextPromoAt} XP.`,
+              ],
+              lore: "The mountain listens to the shape of your intent.",
+              nextMode: "setup_prologue",
+            });
             return d;
           });
         };
@@ -681,31 +1018,69 @@
           setState((prev) => {
             const d = structuredClone(prev);
             d.mode = "map";
-            pushLog(d, { type: "lore", text: `You step into the ${d.run.region}. The mountain draws a slow breath.` });
-            pushLog(d, { type: "system", text: "Open the map. Choose a reachable place." });
+            pushLog(d, `You step into the ${d.run.region}.`, "lore");
+            openTransition(d, {
+              title: "The Gate Opens",
+              subtitle: "Choose a connected place. The mountain is a web, not a hallway.",
+              bullets: [
+                `Region: ${REGION_NAME[locById(d.run.here)?.tier || 1]}`,
+                `Visible depth: ${clamp(1+(d.meta.legacy.revealHints||0),1,3)}`,
+              ],
+              lore: "Routes are rules. Break them if you can.",
+              nextMode: "map",
+            });
             return d;
           });
         };
 
-        const classPrompt = useMemo(() => {
-          if (!state.player.weapon || !state.player.style) return "";
-          const base = `${WEAPONS.find(w => w.key === state.player.weapon)?.name || "Weapon"} ${WEAPONS.flatMap(w => w.styles).find(s => s.key === state.player.style)?.name || "Style"}`;
-          if (state.player.promoTier === 0) return `You are ${base}. Unspecialized. Hungry.`;
-          const spec = state.player.element
-            ? `Bound to ${ELEMENTS.find(e => e.key === state.player.element)?.name || "Element"}.`
-            : state.player.crossStyle
-              ? `Cross-trained in ${WEAPONS.flatMap(w => w.styles).find(s => s.key === state.player.crossStyle)?.name || "Cross"}.`
-              : "";
-          return `${state.player.title}. ${spec}`;
-        }, [state.player.weapon, state.player.style, state.player.promoTier, state.player.element, state.player.crossStyle, state.player.title]);
-
-        // ---------------------------
-        // NAVIGATION + ENCOUNTERS
-        // ---------------------------
-        const canTravelTo = (fromId, toId) => {
-          const adj = neighborsOf(fromId);
-          return adj.includes(toId);
+        // ---------- Promotion ----------
+        const choosePromotionElement = (elementKey) => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            d.player.element = elementKey;
+            d.player.crossStyle = null;
+            d.player.promoTier = 1;
+            d.ui.showPromotion = false;
+            recalcPlayer(d);
+            pushLog(d, `Specialization bound: ${elementKey.toUpperCase()}.`, "system");
+            openTransition(d, {
+              title: "Specialization Bound",
+              subtitle: "An affinity takes the wheel.",
+              bullets: [
+                `New title: ${d.player.title}`,
+                `Passive gained: Affinity`,
+              ],
+              lore: "You didn't pick power. Power picked you back.",
+              nextMode: "location",
+            });
+            return d;
+          });
         };
+        const choosePromotionCross = (crossStyleKey) => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            d.player.crossStyle = crossStyleKey;
+            d.player.element = null;
+            d.player.promoTier = 1;
+            d.ui.showPromotion = false;
+            recalcPlayer(d);
+            pushLog(d, `Specialization taken: Cross-Training ${crossStyleKey.toUpperCase()}.`, "system");
+            openTransition(d, {
+              title: "Cross-Training Taken",
+              subtitle: "You steal technique from another path.",
+              bullets: [
+                `New title: ${d.player.title}`,
+                `Flexibility increased (Wits/Finesse).`,
+              ],
+              lore: "The mountain hates versatile prey. Good.",
+              nextMode: "location",
+            });
+            return d;
+          });
+        };
+
+        // ---------- Navigation ----------
+        const canTravelTo = (fromId, toId) => neighborsOf(fromId).includes(toId);
 
         const travelTo = (toId) => {
           setState((prev) => {
@@ -714,7 +1089,7 @@
 
             const from = d.run.here;
             if (!canTravelTo(from, toId)) {
-              pushLog(d, { type: "system", text: "That route is not passable from here." });
+              pushLog(d, "That route is not passable from here.", "system");
               return d;
             }
 
@@ -723,62 +1098,226 @@
             d.mode = "location";
 
             const L = locById(toId);
-            pushLog(d, { type: "lore", text: `⛰️ ${L.name}.` });
-            pushLog(d, { type: "lore", text: L.lore });
+            pushLog(d, `⛰️ ${L.name}.`, "lore");
+            pushLog(d, L.lore, "lore");
+
+            openTransition(d, {
+              title: "Travel",
+              subtitle: `Arrived: ${L.name}`,
+              bullets: [
+                `Tier ${L.tier} • ${REGION_NAME[L.tier]}`,
+                `Ground: ${isSafeLocation(L, d.player.builtBeacons) ? "Safe" : "Hostile"}`,
+              ],
+              lore: "Every step up the range is a quieter kind of violence.",
+              nextMode: "location",
+            });
 
             return d;
           });
         };
 
-        const rollEncounterIfNeeded = (draft) => {
+        // ---------- Odds: Explore combat vs event ----------
+        function computeExploreOdds(draft) {
           const L = locById(draft.run.here);
           const safe = isSafeLocation(L, draft.player.builtBeacons);
+          if (safe) return { combat: 0, event: 100, factors: ["Safe ground: combat disabled"] };
 
-          // Safe places: no monsters on rest, and generally no forced combat
-          if (safe) {
-            pushLog(draft, { type: "system", text: "The air here is quieter. No footsteps follow." });
-            return;
+          // Base odds (what you asked for)
+          let combat = 40;
+          let event = 60;
+          const factors = [];
+
+          // Tier increases danger
+          if (L.tier === 2) { combat += 8; event -= 8; factors.push("Tier 2: +8% combat"); }
+          if (L.tier === 3) { combat += 14; event -= 14; factors.push("Tier 3: +14% combat"); }
+
+          // Wits reduces combat odds a bit (you spot trouble first)
+          const wits = draft.player.stats.wits || 0;
+          const witsShift = clamp(wits * 2, -6, 10);
+          combat -= witsShift;
+          event += witsShift;
+          if (witsShift !== 0) factors.push(`Wits ${fmtBonus(wits)}: ${witsShift>0?`+${witsShift}% event`:`${-witsShift}% event`}`);
+
+          // Void marks (beacon upgrade) makes the mountain “louder”
+          const vm = draft.meta.legacy.voidMarks || 0;
+          if (vm > 0) {
+            const bump = clamp(vm * 3, 0, 12);
+            combat += bump; event -= bump;
+            factors.push(`Void Marks ${vm}: +${bump}% combat`);
           }
 
-          // Hostile places: chance of combat on explore/search
-          const rng = mulberry32(draft.rngSeed ^ draft.run.day ^ (L.tier * 0x9e37) ^ Date.now());
-          const chance = 0.78; // fairly likely to keep gameplay moving
-          if (rng() < chance) {
-            const enemy = pickEnemyByTier(rng, L.tier);
-            draft.run.inCombat = true;
-            draft.run.enemy = { ...enemy };
-            draft.run.enemyHP = enemy.hp;
-            draft.mode = "combat";
-            pushLog(draft, { type: "danger", text: `⚔️ ${enemy.name} emerges. ${enemy.desc}` });
-          } else {
-            pushLog(draft, { type: "lore", text: "Wind. Stone. Your own breath. For once—nothing else." });
-          }
-        };
+          combat = clamp(Math.round(combat), 5, 90);
+          event = 100 - combat;
+          return { combat, event, factors };
+        }
 
+        // ---------- Random events ----------
+        function runRandomEvent(draft) {
+          const L = locById(draft.run.here);
+          const rng = mulberry32(draft.rngSeed ^ draft.run.day ^ (L.tier*0xBEEF) ^ Date.now());
+
+          // Weights by tier (deeper = rarer outcomes slightly more likely)
+          const tierBoost = L.tier - 1;
+
+          const roll = rng();
+
+          // Uber rare: Borrowed ability (0.8% outer, 1.2% mid, 1.6% inner)
+          const borrowedChance = 0.008 + tierBoost * 0.004;
+          if (roll < borrowedChance) {
+            const ab = BORROWED_ABILITIES[Math.floor(rng()*BORROWED_ABILITIES.length)];
+            // only if not already owned
+            if (!draft.player.extraSkills.some(s => s.key === ab.key)) {
+              draft.player.extraSkills.push({ ...ab });
+            }
+            recalcPlayer(draft);
+            return {
+              title: "Random Event",
+              subtitle: "You learn something you were never meant to learn.",
+              bullets: [
+                `Gained: ${ab.name}`,
+                `This is a rare, once-per-combat trick (preview).`,
+              ],
+              lore: "A stranger’s discipline lodges under your skin like a splinter.",
+            };
+          }
+
+          // Rare: Affinity attack (6% outer, 8% mid, 10% inner)
+          const affChance = 0.06 + tierBoost * 0.02;
+          if (roll < borrowedChance + affChance) {
+            const atk = AFFINITY_ATTACKS[Math.floor(rng()*AFFINITY_ATTACKS.length)];
+            if (!draft.player.extraSkills.some(s => s.key === atk.key)) {
+              draft.player.extraSkills.push({ ...atk });
+            }
+            recalcPlayer(draft);
+            return {
+              title: "Random Event",
+              subtitle: "The mountain lends you a mouthful of power.",
+              bullets: [
+                `Gained: ${atk.name} (combat action)`,
+                `It’s not yours. It’s on loan.`,
+              ],
+              lore: "Lightning doesn't ask permission. Neither do you.",
+            };
+          }
+
+          // Stat boon (20% outer, 24% mid, 28% inner)
+          const boonChance = 0.20 + tierBoost * 0.04;
+          if (roll < borrowedChance + affChance + boonChance) {
+            const statKeys = ["might","finesse","wits","will"];
+            const k = statKeys[Math.floor(rng()*statKeys.length)];
+            draft.player.runBuff[k] += 1;
+            recalcPlayer(draft);
+            return {
+              title: "Random Event",
+              subtitle: "A brief, brutal lesson changes you.",
+              bullets: [
+                `Run buff: ${k.toUpperCase()} +1`,
+                `This lasts for the current exile.`,
+              ],
+              lore: "You bleed in the right direction. The mountain approves.",
+            };
+          }
+
+          // Otherwise: big resource find
+          const drop = pickMaterialDrop(rng, L.tier);
+          const amount = 2 + Math.floor(rng() * (3 + tierBoost)); // 2..(4+)
+          draft.player.pack[drop.key] += amount;
+          return {
+            title: "Random Event",
+            subtitle: "You find something useful. Quickly. Quietly.",
+            bullets: [
+              `Loot: ${drop.name} x${amount}`,
+              `Pack grows heavier. Extraction becomes tempting.`,
+            ],
+            lore: "Sometimes the mountain drops coins to see if you bend over.",
+          };
+        }
+
+        // ---------- Encounters ----------
+        function startCombat(draft, forced = false) {
+          const L = locById(draft.run.here);
+          const rng = mulberry32(draft.rngSeed ^ draft.run.day ^ 0xDEAD ^ Date.now());
+          const enemy = pickEnemyByTier(rng, L.tier);
+
+          draft.run.inCombat = true;
+          draft.run.enemy = { ...enemy };
+          draft.run.enemyHP = enemy.hp;
+          draft.mode = "combat";
+
+          // reset per-combat borrowed flags
+          draft.player.combatFlags = {};
+
+          pushLog(draft, `⚔️ ${enemy.name} emerges.`, "danger");
+          if (forced) pushLog(draft, "You stirred the wrong kind of silence.", "danger");
+        }
+
+        // ---------- Location actions (hostile set) ----------
         const explore = () => {
           setState((prev) => {
             const d = structuredClone(prev);
-            if (d.mode !== "location") return prev;
-            pushLog(d, { type: "system", text: "You move through the place with careful intent." });
-            rollEncounterIfNeeded(d);
-            return d;
-          });
-        };
+            if (d.mode !== "location" || d.run.inCombat) return prev;
 
-        const search = () => {
-          setState((prev) => {
-            const d = structuredClone(prev);
-            if (d.mode !== "location") return prev;
             const L = locById(d.run.here);
             const safe = isSafeLocation(L, d.player.builtBeacons);
 
-            // In safe places, searching yields small material without combat.
-            const rng = mulberry32(d.rngSeed ^ d.run.day ^ 0xbeef ^ Date.now());
-            const drop = pickMaterialDrop(rng, safe ? 1 : L.tier);
-            d.player.pack[drop.key] += 1;
-            pushLog(d, { type: "system", text: `You salvage: ${drop.name} (+1).` });
+            const odds = computeExploreOdds(d);
+            const rng = mulberry32(d.rngSeed ^ d.run.day ^ 0xC0DE ^ Date.now());
+            const roll = Math.floor(rng()*100) + 1;
 
-            if (!safe) rollEncounterIfNeeded(d);
+            if (safe) {
+              // Safe explore -> always event (non-combat)
+              const outcome = runRandomEvent(d);
+              openTransition(d, { ...outcome, nextMode: "location" });
+              pushLog(d, "You explore safely.", "system");
+              return d;
+            }
+
+            if (roll <= odds.combat) {
+              startCombat(d, false);
+              openTransition(d, {
+                title: "Explore",
+                subtitle: "You found trouble first.",
+                bullets: [
+                  `Outcome: Combat`,
+                  `Tier ${L.tier} enemy engaged.`,
+                ],
+                lore: "The mountain doesn’t spawn monsters. It reveals them.",
+                nextMode: "combat",
+              });
+              return d;
+            } else {
+              const outcome = runRandomEvent(d);
+              openTransition(d, { ...outcome, nextMode: "location" });
+              pushLog(d, "You explore and find something… else.", "lore");
+              return d;
+            }
+          });
+        };
+
+        const stirUpNoGood = () => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            if (d.mode !== "location" || d.run.inCombat) return prev;
+            const L = locById(d.run.here);
+            const safe = isSafeLocation(L, d.player.builtBeacons);
+            if (safe) {
+              openTransition(d, {
+                title: "Stir Up No Good",
+                subtitle: "Not here.",
+                bullets: ["Safe ground refuses to answer your provocation."],
+                lore: "Even chaos respects wards.",
+                nextMode: "location",
+              });
+              return d;
+            }
+            startCombat(d, true);
+            openTransition(d, {
+              title: "Provocation",
+              subtitle: "You rang the bell.",
+              bullets: ["Outcome: Forced combat", `Tier ${L.tier} enemy engaged.`],
+              lore: "Some doors open inward.",
+              nextMode: "combat",
+            });
             return d;
           });
         };
@@ -794,21 +1333,24 @@
             const baseHeal = 2;
             const bonus = safe ? (1 + (d.meta.legacy.safeRest || 0)) : 0;
             const heal = baseHeal + bonus;
+            const before = d.player.hp;
 
             d.player.hp = clamp(d.player.hp + heal, 0, d.player.hpMax);
             d.run.day += 1;
 
-            if (safe) {
-              pushLog(d, { type: "system", text: `You rest safely (+${heal} HP). No monsters here.` });
-              // no encounters
-            } else {
-              pushLog(d, { type: "system", text: `You rest in the open (+${heal} HP). The mountain notices.` });
-              // small chance to get jumped (but not guaranteed)
-              const rng = mulberry32(d.rngSeed ^ d.run.day ^ 0x1357 ^ Date.now());
-              if (rng() < 0.35) rollEncounterIfNeeded(d);
-              else pushLog(d, { type: "lore", text: "You wake to cold stone and unanswered silence." });
-            }
+            openTransition(d, {
+              title: "Rest",
+              subtitle: safe ? "Safe ground. No monsters." : "Open ground. The mountain hears you.",
+              bullets: [
+                `HP: ${before} → ${d.player.hp} (+${heal})`,
+                `Day advances: ${d.run.day}`,
+                safe ? "No combat can trigger from this rest." : "Exploration becomes riskier over time (preview)."
+              ],
+              lore: safe ? "For a moment, your breath belongs only to you." : "Sleep is a contract you sign with your eyes closed.",
+              nextMode: "location",
+            });
 
+            pushLog(d, safe ? `You rest safely (+${heal} HP).` : `You rest in the open (+${heal} HP).`, "system");
             return d;
           });
         };
@@ -819,26 +1361,56 @@
             if (d.mode !== "location") return prev;
 
             if (!d.meta.legacy.canBuildBeacons) {
-              pushLog(d, { type: "system", text: "You do not yet know how to carry the Beacon into the field." });
+              openTransition(d, {
+                title: "Build Beacon",
+                subtitle: "Knowledge missing.",
+                bullets: ["Requires Beacon upgrade: Portable Relay."],
+                lore: "You can’t carve safety from stone until you learn the language of light.",
+                nextMode: "location",
+              });
               return d;
             }
 
             const L = locById(d.run.here);
             if (isSafeLocation(L, d.player.builtBeacons)) {
-              pushLog(d, { type: "system", text: "This place is already held by ward-light." });
+              openTransition(d, {
+                title: "Build Beacon",
+                subtitle: "Already warded.",
+                bullets: ["This location is already safe."],
+                lore: "You don't stack prayers on top of prayers.",
+                nextMode: "location",
+              });
               return d;
             }
 
             if (d.player.pack.relay_parts < 1 || d.player.pack.ward_coil < 1) {
-              pushLog(d, { type: "system", text: "To build a field beacon, you need: Relay Parts (1) + Ward Coil (1)." });
+              openTransition(d, {
+                title: "Build Beacon",
+                subtitle: "Missing materials.",
+                bullets: ["Need: Relay Parts x1", "Need: Ward Coil x1"],
+                lore: "A beacon is not a torch. It's a machine with a memory.",
+                nextMode: "location",
+              });
               return d;
             }
 
             d.player.pack.relay_parts -= 1;
             d.player.pack.ward_coil -= 1;
             d.player.builtBeacons.push(L.id);
-            pushLog(d, { type: "lore", text: "You assemble a beacon-limb in the dirt. It flickers—then holds." });
-            pushLog(d, { type: "system", text: `${L.name} is now a safe place.` });
+
+            openTransition(d, {
+              title: "Field Beacon",
+              subtitle: "Safety forged.",
+              bullets: [
+                `${L.name} is now a safe place.`,
+                "Rest becomes monster-free here.",
+                "Extraction is now possible here.",
+              ],
+              lore: "Light bites into the dark and refuses to let go.",
+              nextMode: "location",
+            });
+
+            pushLog(d, `${L.name} becomes safe.`, "system");
             return d;
           });
         };
@@ -852,10 +1424,17 @@
             const safe = isSafeLocation(L, d.player.builtBeacons);
 
             if (!safe) {
-              pushLog(d, { type: "system", text: "Extraction requires safety: a Beacon, a refuge, or a built ward." });
+              openTransition(d, {
+                title: "Extraction",
+                subtitle: "Unsafe.",
+                bullets: ["Extraction requires safety: Beacon, refuge, or built ward."],
+                lore: "You can’t pack evidence while knives are out.",
+                nextMode: "location",
+              });
               return d;
             }
 
+            const beforeTotal = Object.values(d.player.pack).reduce((a,b)=>a+b,0);
             let moved = 0;
             for (const k of Object.keys(d.player.pack)) {
               const amt = d.player.pack[k] || 0;
@@ -865,17 +1444,28 @@
                 moved += amt;
               }
             }
-            pushLog(d, { type: "system", text: `Extraction complete. Banked ${moved} material(s).` });
+
+            openTransition(d, {
+              title: "Extraction Complete",
+              subtitle: "The Beacon accepts proof.",
+              bullets: [
+                `Banked: ${moved} item(s)`,
+                `Pack emptied: ${beforeTotal} → 0`,
+                `Bank total: ${Object.values(d.meta.bank).reduce((a,b)=>a+b,0)}`,
+              ],
+              lore: "What you extract becomes permanent. What you carry stays negotiable.",
+              nextMode: "location",
+            });
+
+            pushLog(d, `Extraction complete. Banked ${moved}.`, "system");
             return d;
           });
         };
 
-        // ---------------------------
-        // COMBAT
-        // ---------------------------
+        // ---------- Combat ----------
         const takeDamage = (draft, amount, reason) => {
           draft.player.hp = clamp(draft.player.hp - amount, 0, draft.player.hpMax);
-          pushLog(draft, { type: "danger", text: `🩸 You take ${amount} damage (${reason}).` });
+          pushLog(draft, `🩸 You take ${amount} damage (${reason}).`, "danger");
           if (draft.player.hp <= 0) {
             draft.mode = "dead";
             const L = locById(draft.run.here);
@@ -884,11 +1474,22 @@
             const echoes = Math.max(2, depthEcho) + Math.floor(carryPenalty / 3);
             draft.meta.echoes += echoes;
 
-            // lose unbanked materials (pack wiped)
+            // lose unbanked materials
             for (const k of Object.keys(draft.player.pack)) draft.player.pack[k] = 0;
 
-            pushLog(draft, { type: "danger", text: "☠️ You fall. The mountain keeps what you did not extract." });
-            pushLog(draft, { type: "system", text: `At the Beacon, you receive ${echoes} Echoes.` });
+            openTransition(draft, {
+              title: "You Fall",
+              subtitle: "The mountain keeps the rest.",
+              bullets: [
+                `Echoes gained: +${echoes}`,
+                "Unextracted pack: LOST",
+                `Bank remains: ${Object.values(draft.meta.bank).reduce((a,b)=>a+b,0)} mats`,
+              ],
+              lore: "The Beacon does not mourn. It records.",
+              nextMode: "dead",
+            });
+
+            pushLog(draft, `☠️ You fall. +${echoes} Echoes at the Beacon.`, "danger");
           }
         };
 
@@ -902,26 +1503,26 @@
           const braceBonus = defendActive ? 2 : 0;
 
           const check = rollCheck(rng, `${enemy.name} attacks`, defMod + braceBonus, enemy.attackDR);
-          pushLog(draft, { type: "roll", text: `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "HIT" : "MISS"}` });
+          pushLog(draft, `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "HIT" : "MISS"}`, "roll");
 
           if (check.success) {
             let dmg = rollDamage(rng, enemy.dmg[0], enemy.dmg[1]);
             if (defendActive) dmg = Math.max(0, dmg - 1 - (draft.player.element === "earth" ? 1 : 0));
             takeDamage(draft, dmg, context);
           } else {
-            pushLog(draft, { type: "system", text: "You avoid the blow." });
+            pushLog(draft, "You avoid the blow.", "system");
           }
           draft.run._defendActive = false;
         };
 
-        const endCombatWin = (draft) => {
+        const endCombatWin = (draft, enemyName) => {
           const L = locById(draft.run.here);
-          const rng = mulberry32(draft.rngSeed ^ draft.run.day ^ 0xbeef);
+          const rng = mulberry32(draft.rngSeed ^ draft.run.day ^ 0xbeef ^ Date.now());
 
           const drop = pickMaterialDrop(rng, L.tier);
           draft.player.pack[drop.key] += 1;
 
-          const xpGain = L.tier; // 1/2/3 by region
+          const xpGain = L.tier;
           draft.player.xp += xpGain;
 
           draft.run.inCombat = false;
@@ -929,13 +1530,26 @@
           draft.run.enemyHP = 0;
           draft.mode = "location";
 
-          pushLog(draft, { type: "system", text: `Victory. +${xpGain} XP. Salvage gained: ${drop.name} (+1).` });
-
           // Promotion unlock
+          let promoText = null;
           if (draft.player.promoTier === 0 && draft.player.xp >= draft.player.nextPromoAt) {
             draft.ui.showPromotion = true;
-            pushLog(draft, { type: "lore", text: "Something in you shifts. A specialization is ready to bind." });
+            promoText = "Specialization unlocked!";
           }
+
+          openTransition(draft, {
+            title: "Combat Resolved",
+            subtitle: `Defeated: ${enemyName}`,
+            bullets: [
+              `XP gained: +${xpGain} (Total XP: ${draft.player.xp})`,
+              `Loot: ${drop.name} x1`,
+              promoText ? promoText : "No further change.",
+            ].filter(Boolean),
+            lore: "Violence is the mountain’s native tongue. You’re getting fluent.",
+            nextMode: "location",
+          });
+
+          pushLog(draft, `Victory. +${xpGain} XP. Loot: ${drop.name} x1.`, "system");
         };
 
         const combatAction = (key) => {
@@ -951,112 +1565,184 @@
 
             const doAttack = (label, bonus, dmgMin, dmgMax, onMiss) => {
               const check = rollCheck(rng, label, atkMod + bonus, enemy.dr);
-              pushLog(d, { type: "roll", text: `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
+              pushLog(d, `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}`, "roll");
 
               if (check.success) {
                 let dmg = rollDamage(rng, dmgMin, dmgMax);
                 if (check.d20 === 20) {
                   dmg += 1;
                   if (d.player.element === "fire") dmg += 1;
-                  pushLog(d, { type: "system", text: "✦ Critical impact." });
+                  pushLog(d, "✦ Critical impact.", "system");
                 }
                 d.run.enemyHP = Math.max(0, d.run.enemyHP - dmg);
-                pushLog(d, { type: "system", text: `Enemy takes ${dmg} damage.` });
-                if (d.run.enemyHP <= 0) { endCombatWin(d); return; }
+                pushLog(d, `Enemy takes ${dmg} damage.`, "system");
+                if (d.run.enemyHP <= 0) { endCombatWin(d, enemy.name); return; }
               } else {
                 if (onMiss) onMiss();
               }
               if (d.mode !== "dead") enemyTurn(d, "combat");
             };
 
+            // Base actions
             if (key === "attack") { doAttack("You attack", 0, 1, 3); return d; }
 
             if (key === "defend") {
               d.run._defendActive = true;
-              pushLog(d, { type: "system", text: `You Brace (Defense ${fmtBonus(defMod)}).` });
+              pushLog(d, `You Brace (Defense ${fmtBonus(defMod)}).`, "system");
               enemyTurn(d, "brace");
               return d;
             }
 
             if (key === "maneuver") {
               const check = rollCheck(rng, "You Maneuver", d.player.stats.wits + d.player.stats.finesse, DR.standard);
-              pushLog(d, { type: "roll", text: `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
-              if (check.success) pushLog(d, { type: "system", text: "You gain Advantage (preview flavor)." });
+              pushLog(d, `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}`, "roll");
+              if (check.success) pushLog(d, "You gain Advantage (preview flavor).", "system");
               else takeDamage(d, 1, "misstep");
               if (d.mode !== "dead") enemyTurn(d, "counter");
               return d;
             }
 
             // Style specials
-            if (key === "aim") { pushLog(d, { type: "system", text: "You Aim. (+2 baked into this shot.)" }); doAttack("Aimed Shot", 2, 1, 4); return d; }
+            if (key === "aim") { doAttack("Aimed Shot", 2, 1, 4); return d; }
             if (key === "dash") {
               const check = rollCheck(rng, "Dash Shot", atkMod + 1, enemy.dr);
-              pushLog(d, { type: "roll", text: `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
+              pushLog(d, `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}`, "roll");
               if (check.success) {
                 const dmg = rollDamage(rng, 1, 3);
                 d.run.enemyHP = Math.max(0, d.run.enemyHP - dmg);
-                pushLog(d, { type: "system", text: `Enemy takes ${dmg} damage.` });
-                if (d.run.enemyHP <= 0) { endCombatWin(d); return d; }
-                pushLog(d, { type: "system", text: "You slip out of reach. No retaliation." });
+                pushLog(d, `Enemy takes ${dmg} damage.`, "system");
+                if (d.run.enemyHP <= 0) { endCombatWin(d, enemy.name); return d; }
+                pushLog(d, "You slip out of reach. No retaliation.", "system");
                 return d;
               }
               enemyTurn(d, "dash-fail");
               return d;
             }
-            if (key === "snare") { pushLog(d, { type: "system", text: "You set a Snare. Enemy Attack DR +2 once." }); const old = enemy.attackDR; enemy.attackDR = old + 2; enemyTurn(d, "snare"); enemy.attackDR = old; return d; }
+            if (key === "snare") {
+              pushLog(d, "You set a Snare. Enemy Attack DR +2 once.", "system");
+              const old = enemy.attackDR; enemy.attackDR = old + 2;
+              enemyTurn(d, "snare");
+              enemy.attackDR = old;
+              return d;
+            }
             if (key === "bolt") { doAttack("Arc Bolt", 1, 1, 5); return d; }
-            if (key === "hex") { const old = enemy.dr; enemy.dr = Math.max(8, enemy.dr - 2); pushLog(d, { type: "system", text: "Hex: Enemy DR −2 this turn." }); doAttack("Hexed Strike", 0, 1, 2); enemy.dr = old; return d; }
-            if (key === "focus") { pushLog(d, { type: "system", text: "You Focus. (+2 baked into next cast.)" }); doAttack("Focused Cast", 2, 1, 4); return d; }
+            if (key === "hex") {
+              const old = enemy.dr; enemy.dr = Math.max(8, enemy.dr - 2);
+              pushLog(d, "Hex: Enemy DR −2 this turn.", "system");
+              doAttack("Hexed Strike", 0, 1, 2);
+              enemy.dr = old;
+              return d;
+            }
+            if (key === "focus") { doAttack("Focused Cast", 2, 1, 4); return d; }
             if (key === "riposte") { doAttack("Shield-Check", 0, 1, 2); return d; }
             if (key === "bleed") { doAttack("Open Vein", 0, 2, 4, () => takeDamage(d, 1, "overextension")); return d; }
             if (key === "lunge") { doAttack("Lunge", 1, 2, 5, () => takeDamage(d, 2, "exposed")); return d; }
 
+            // Event-granted: Affinity attacks
+            if (key === "aff_firebrand") { doAttack("Firebrand", 1, 2, 5, () => takeDamage(d, 1, "burn-back")); return d; }
+            if (key === "aff_frostbind") {
+              const old = enemy.attackDR; enemy.attackDR = old + 2;
+              doAttack("Frostbind", 0, 1, 3);
+              enemy.attackDR = old;
+              return d;
+            }
+            if (key === "aff_thunderlink") { doAttack("Thunderlink", 2, 1, 2); return d; }
+            if (key === "aff_stonecoil") { d.run._defendActive = true; doAttack("Stonecoil", 0, 1, 4); return d; }
+            if (key === "aff_voidbite") {
+              const bonus = (d.player.hp <= Math.ceil(d.player.hpMax*0.4)) ? 3 : 0;
+              doAttack("Voidbite", bonus, 2, 6);
+              return d;
+            }
+
+            // Uber rare borrowed abilities (preview: once per combat)
+            if (key === "borrowed_duelist") {
+              if (d.player.combatFlags.borrowed_duelist) { pushLog(d, "That technique is spent for this combat.", "system"); enemyTurn(d, "wasted"); return d; }
+              d.player.combatFlags.borrowed_duelist = true;
+              pushLog(d, "Borrowed Duelist: your next attack rerolls on failure (preview).", "system");
+              // Implement: make one boosted attack with a reroll
+              const attempt = () => {
+                const check = rollCheck(rng, "Borrowed Duelist Strike", atkMod + 1, enemy.dr);
+                pushLog(d, `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}`, "roll");
+                return check;
+              };
+              let c = attempt();
+              if (!c.success) {
+                pushLog(d, "Reroll!", "system");
+                c = attempt();
+              }
+              if (c.success) {
+                const dmg = rollDamage(rng, 2, 5);
+                d.run.enemyHP = Math.max(0, d.run.enemyHP - dmg);
+                pushLog(d, `Enemy takes ${dmg} damage.`, "system");
+                if (d.run.enemyHP <= 0) { endCombatWin(d, enemy.name); return d; }
+              }
+              enemyTurn(d, "borrowed");
+              return d;
+            }
+
+            if (key === "borrowed_warden") {
+              if (d.player.combatFlags.borrowed_warden) { pushLog(d, "That technique is spent for this combat.", "system"); enemyTurn(d, "wasted"); return d; }
+              d.player.combatFlags.borrowed_warden = true;
+              d.player.combatFlags.negateNextHit = true;
+              pushLog(d, "Borrowed Warden: negate the next enemy hit (preview).", "system");
+              // Enemy still attacks, but hit can be negated in enemyTurn:
+              const enemyTurnPatched = () => {
+                const e = d.run.enemy;
+                const r = mulberry32(d.rngSeed ^ d.run.day ^ 0x3333 ^ d.run.enemyHP);
+                const def = computeDefenseMod(d.player.stats, d.player.style);
+                const check = rollCheck(r, `${e.name} attacks`, def, e.attackDR);
+                pushLog(d, `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "HIT" : "MISS"}`, "roll");
+                if (check.success) {
+                  if (d.player.combatFlags.negateNextHit) {
+                    d.player.combatFlags.negateNextHit = false;
+                    pushLog(d, "The ward flares. The hit is negated.", "system");
+                    return;
+                  }
+                  const dmg = rollDamage(r, e.dmg[0], e.dmg[1]);
+                  takeDamage(d, dmg, "combat");
+                } else pushLog(d, "You avoid the blow.", "system");
+              };
+              enemyTurnPatched();
+              return d;
+            }
+
+            if (key === "borrowed_invoker") {
+              if (d.player.combatFlags.borrowed_invoker) { pushLog(d, "That technique is spent for this combat.", "system"); enemyTurn(d, "wasted"); return d; }
+              d.player.combatFlags.borrowed_invoker = true;
+              // Implement: a single empowered roll
+              const check = rollCheck(rng, "Borrowed Invoker", atkMod, enemy.dr);
+              pushLog(d, `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr}`, "roll");
+              const boosted = { ...check, total: check.total + 3, success: (check.total + 3) >= check.dr };
+              pushLog(d, `✦ After-seeing boost: +3 → ${boosted.total} → ${boosted.success ? "SUCCESS" : "FAIL"}`, "system");
+              if (boosted.success) {
+                const dmg = rollDamage(rng, 3, 6);
+                d.run.enemyHP = Math.max(0, d.run.enemyHP - dmg);
+                pushLog(d, `Enemy takes ${dmg} damage.`, "system");
+                if (d.run.enemyHP <= 0) { endCombatWin(d, enemy.name); return d; }
+              }
+              enemyTurn(d, "borrowed");
+              return d;
+            }
+
             return d;
           });
         };
 
-        // ---------------------------
-        // PROMOTION (after some fights)
-        // ---------------------------
-        const choosePromotionElement = (elementKey) => {
-          setState((prev) => {
-            const d = structuredClone(prev);
-            d.player.element = elementKey;
-            d.player.crossStyle = null;
-            d.player.promoTier = 1;
-            d.ui.showPromotion = false;
-            recalcPlayer(d);
-
-            pushLog(d, { type: "system", text: `Specialization bound: ${elementKey.toUpperCase()}.` });
-            pushLog(d, { type: "lore", text: `A new name fits you better now: ${d.player.title}.` });
-
-            return d;
-          });
-        };
-        const choosePromotionCross = (crossStyleKey) => {
-          setState((prev) => {
-            const d = structuredClone(prev);
-            d.player.crossStyle = crossStyleKey;
-            d.player.element = null;
-            d.player.promoTier = 1;
-            d.ui.showPromotion = false;
-            recalcPlayer(d);
-
-            pushLog(d, { type: "system", text: `Specialization taken: Cross-Training ${crossStyleKey.toUpperCase()}.` });
-            pushLog(d, { type: "lore", text: `A new name fits you better now: ${d.player.title}.` });
-
-            return d;
-          });
-        };
-
-        // ---------------------------
-        // BEACON (between runs)
-        // ---------------------------
+        // ---------- Beacon ----------
         const enterBeacon = () => {
           setState((prev) => {
             const d = structuredClone(prev);
             d.mode = "beacon";
-            pushLog(d, { type: "lore", text: "The Beacon’s light does not comfort you. It simply proves you still exist." });
+            openTransition(d, {
+              title: "The Beacon",
+              subtitle: "Between runs, the ledger opens.",
+              bullets: [
+                `Echoes: ${d.meta.echoes}`,
+                `Banked mats: ${Object.values(d.meta.bank).reduce((a,b)=>a+b,0)}`,
+              ],
+              lore: "A quiet room where upgrades feel like prophecy.",
+              nextMode: "beacon",
+            });
             return d;
           });
         };
@@ -1064,101 +1750,108 @@
         const buyUpgrade = (up) => {
           setState((prev) => {
             const d = structuredClone(prev);
-            if (d.meta.echoes < up.costEchoes) { pushLog(d, { type: "system", text: "Not enough Echoes." }); return d; }
-
-            // mats check
+            if (d.meta.echoes < up.costEchoes) { showToast("Not enough Echoes."); return d; }
             for (const [k,amt] of Object.entries(up.costMats || {})) {
-              if ((d.meta.bank[k] || 0) < amt) {
-                pushLog(d, { type: "system", text: `Missing materials: ${mat(k)?.name || k} (${amt}).` });
-                return d;
-              }
+              if ((d.meta.bank[k] || 0) < amt) { showToast("Missing mats."); return d; }
             }
-
             d.meta.echoes -= up.costEchoes;
             for (const [k,amt] of Object.entries(up.costMats || {})) d.meta.bank[k] -= amt;
-
             up.apply(d);
-            pushLog(d, { type: "system", text: `Beacon upgraded: ${up.name}.` });
-
+            openTransition(d, {
+              title: "Beacon Upgraded",
+              subtitle: up.name,
+              bullets: [
+                `Echoes spent: ${up.costEchoes}`,
+                ...Object.entries(up.costMats||{}).map(([k,amt]) => `${mat(k)?.name || k} x${amt}`),
+              ],
+              lore: "The Beacon rewrites you with patient hands.",
+              nextMode: "beacon",
+            });
             return d;
           });
         };
 
-        const wakeForAnotherRun = () => {
+        // ---------- Transition close ----------
+        const closeTransition = () => {
           setState((prev) => {
             const d = structuredClone(prev);
-            const next = mkNewGame(Date.now());
-            next.meta = d.meta;
-            next.mode = "menu";
-            recalcPlayer(next);
-            pushLog(next, { type: "lore", text: "You sit in the Beacon’s shadow and decide whether you have another climb in you." });
-            return next;
+            d.transition.open = false;
+            if (d.transition.nextMode) d.mode = d.transition.nextMode;
+            d.transition.nextMode = null;
+            return d;
           });
         };
 
-        // ---------------------------
-        // UI: Map reveal based on beacon upgrade
-        // ---------------------------
-        const visibleLocations = useMemo(() => {
-          const revealTier = clamp(1 + (state.meta.legacy.revealHints || 0), 1, 3);
-          return LOCATIONS.filter(l => l.tier <= revealTier);
-        }, [state.meta.legacy.revealHints]);
+        // ---------- Map reveal ----------
+        const revealTier = useMemo(() => clamp(1 + (state.meta.legacy.revealHints || 0), 1, 3), [state.meta.legacy.revealHints]);
+        const reachable = useMemo(() => new Set(neighborsOf(state.run.here)), [state.run.here]);
 
-        const reachable = useMemo(() => {
-          const n = neighborsOf(state.run.here);
-          return new Set(n);
-        }, [state.run.here]);
-
-        // initial gentle flavor
+        // initial logs
         useEffect(() => {
           setState((prev) => {
             const d = structuredClone(prev);
             if (d.run.log.length === 0) {
-              pushLog(d, { type: "lore", text: "This is a preview, but the mountain is real enough to kill you." });
-              pushLog(d, { type: "system", text: "Save/Load works. Extraction banks materials for Beacon upgrades." });
+              pushLog(d, "Preview build. Save/Load works. Transitions summarize outcomes.", "system");
+              pushLog(d, "The mountain is a map now—routes are real.", "lore");
             }
             return d;
           });
         }, []);
 
-        // ---------------------------
-        // RENDER: SCREEN MODES
-        // ---------------------------
+        // =========================================================
+        // UI: HUD / Screens
+        // =========================================================
+        const classPrompt = useMemo(() => {
+          if (!state.player.weapon || !state.player.style) return "";
+          const base = `${WEAPONS.find(w => w.key === state.player.weapon)?.name || "Weapon"} ${WEAPONS.flatMap(w => w.styles).find(s => s.key === state.player.style)?.name || "Style"}`;
+          if (state.player.promoTier === 0) return `You are ${base}. Unspecialized.`;
+          const spec = state.player.element
+            ? `Bound to ${ELEMENTS.find(e => e.key === state.player.element)?.name || "Element"}.`
+            : state.player.crossStyle
+              ? `Cross-trained in ${WEAPONS.flatMap(w => w.styles).find(s => s.key === state.player.crossStyle)?.name || "Cross"}.`
+              : "";
+          return `${state.player.title}. ${spec}`;
+        }, [state.player.weapon, state.player.style, state.player.promoTier, state.player.element, state.player.crossStyle, state.player.title]);
 
         const TopHUD = () => (
-          <div className="absolute top-0 left-0 right-0 z-20">
+          <div className="absolute top-0 left-0 right-0 z-30">
             <div className="mx-auto max-w-6xl px-4 md:px-6 pt-4">
-              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <div className="select-none">
-                  <div className="text-[11px] uppercase tracking-[0.28em] text-white/55">
-                    DRAGONFALL • Mountain Exile • v{VERSION}
-                  </div>
-                  <div className="text-xl md:text-2xl font-semibold tracking-tight">
-                    {state.mode === "menu" ? "The Beacon" :
-                     state.mode === "beacon" ? "Beacon Upgrades" :
-                     state.mode === "map" ? "Mountain Map" :
-                     state.mode === "combat" ? "Combat" :
-                     state.mode === "location" ? "Location" :
-                     state.mode.startsWith("setup") ? "Preparation" :
-                     state.mode === "dead" ? "Fallen" :
-                     "Dragonfall"}
-                  </div>
-                  {state.mode !== "menu" ? (
-                    <div className="text-sm text-white/65 mt-1">
-                      <span className="text-white/80 font-semibold">{classPrompt}</span>
-                      <span className="text-white/45"> • </span>
-                      <span className="text-white/70">{REGION_NAME[here?.tier || 1]}</span>
+              <div className="ui-panel rounded-3xl px-4 md:px-6 py-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div className="select-none">
+                    <div className="ui-runic text-white/60">
+                      DRAGONFALL • MOUNTAIN EXILE • v{VERSION}
                     </div>
-                  ) : (
-                    <div className="text-sm text-white/65 mt-1">A light between deaths. A ledger of what you bring back.</div>
-                  )}
-                </div>
+                    <div className="ui-title text-2xl md:text-3xl font-bold mt-1">
+                      {state.mode === "menu" ? "The Beacon" :
+                       state.mode === "beacon" ? "Beacon Upgrades" :
+                       state.mode === "map" ? "Mountain Map" :
+                       state.mode === "combat" ? "Combat" :
+                       state.mode === "location" ? "Location" :
+                       state.mode.startsWith("setup") ? "Preparation" :
+                       state.mode === "dead" ? "Fallen" :
+                       "Dragonfall"}
+                    </div>
+                    {state.mode !== "menu" ? (
+                      <div className="text-sm text-white/70 mt-2">
+                        <span className="text-white/85 font-semibold">{classPrompt}</span>
+                        <span className="text-white/40"> • </span>
+                        <span className="text-white/70">{REGION_NAME[here?.tier || 1]}</span>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-white/70 mt-2">
+                        A ledger of climbs. Echoes and materials shape your next exile.
+                      </div>
+                    )}
+                  </div>
 
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={saveGame} variant="ghost">Save</Button>
-                  <Button onClick={loadGame} variant="ghost">Load</Button>
-                  <Button onClick={clearSave} variant="ghost">Clear</Button>
-                  <Button onClick={hardReset} variant="danger">New</Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={saveGame} variant="ghost">Save</Button>
+                    <Button onClick={loadGame} variant="ghost">Load</Button>
+                    <Button onClick={clearSave} variant="ghost">Clear</Button>
+                    <Button onClick={beginNewExile} variant="danger">New Exile</Button>
+                    <Button onClick={enterBeacon} variant="gold">Beacon</Button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1166,17 +1859,22 @@
         );
 
         const RightHUD = () => (
-          <div className="absolute top-24 right-0 z-20">
+          <div className="absolute top-[124px] right-0 z-20">
             <div className="pr-4 md:pr-6">
-              <div className="rounded-2xl bg-black/35 border border-white/10 backdrop-blur-md px-3 py-3 w-[min(360px,calc(100vw-1rem))]">
+              <div className="rounded-3xl ui-panel-soft px-4 py-4 w-[min(360px,calc(100vw-1rem))]">
                 <div className="flex flex-wrap gap-2">
                   <Pill>HP {state.player.hp}/{state.player.hpMax}</Pill>
                   <Pill>XP {state.player.xp}</Pill>
                   <Pill>Echoes {state.meta.echoes}</Pill>
                 </div>
                 <div className="mt-2 text-xs text-white/60">
-                  Banked materials fuel Beacon upgrades. Unextracted materials are lost on death.
+                  Banked mats fuel Beacon upgrades. Unextracted pack is lost on death.
                 </div>
+                {state.player.runBuff && (state.player.runBuff.might||state.player.runBuff.finesse||state.player.runBuff.wits||state.player.runBuff.will) ? (
+                  <div className="mt-3 text-xs text-white/70">
+                    Run Buffs: {["might","finesse","wits","will"].map(k => (state.player.runBuff[k] ? `${k.toUpperCase()} ${fmtBonus(state.player.runBuff[k])}` : null)).filter(Boolean).join(" • ")}
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -1184,53 +1882,31 @@
 
         const MenuScreen = () => (
           <div className="relative z-10 min-h-screen flex items-center justify-center">
-            <div className="w-full max-w-5xl px-4 md:px-6">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
-                <div className="lg:col-span-7">
-                  <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8">
-                    <div className="text-4xl md:text-5xl font-semibold tracking-tight">DRAGONFALL</div>
-                    <div className="text-white/70 mt-2 leading-relaxed">
-                      You climb a mountain that does not want you.
-                      You do not sell treasure — you bring back <span className="text-white font-semibold">materials</span>.
-                      You spend <span className="text-white font-semibold">Echoes</span> and <span className="text-white font-semibold">mats</span> to reshape your next exile.
-                    </div>
-                    <Divider />
-                    <div className="flex flex-wrap gap-3">
-                      <Button onClick={beginNewExile}>New Exile</Button>
-                      <Button variant="ghost" onClick={() => {
-                        // continue if already started
-                        if (state.player.weapon && state.player.style) goMode("map");
-                        else beginNewExile();
-                      }}>
-                        Continue
-                      </Button>
-                      <Button variant="gold" onClick={enterBeacon}>Beacon</Button>
-                    </div>
-
-                    <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
-                      <div className="text-xs uppercase tracking-[0.22em] text-white/60">Current Beacon Holdings</div>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {Object.keys(state.meta.bank).map((k) => (
-                          <Pill key={k}>{mat(k)?.name || k}: {state.meta.bank[k] || 0}</Pill>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
+            <div className="w-full max-w-5xl px-4 md:px-6 pt-32 pb-10">
+              <div className="ui-panel rounded-3xl p-6 md:p-8">
+                <div className="ui-title text-4xl md:text-5xl font-bold">DRAGONFALL</div>
+                <div className="text-white/75 mt-3 leading-relaxed">
+                  You don’t sell loot. You extract proof. Materials become Beacon buffs.
+                  The mountain is a web of locations—move only along real connections.
+                </div>
+                <Divider />
+                <div className="flex flex-wrap gap-3">
+                  <Button onClick={beginNewExile}>New Exile</Button>
+                  <Button variant="ghost" onClick={() => {
+                    if (state.player.weapon && state.player.style) goMode("map");
+                    else beginNewExile();
+                  }}>
+                    Continue
+                  </Button>
+                  <Button variant="gold" onClick={enterBeacon}>Beacon</Button>
                 </div>
 
-                <div className="lg:col-span-5">
-                  <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6">
-                    <div className="text-sm font-semibold tracking-wide">Tone</div>
-                    <div className="text-white/70 mt-2 leading-relaxed">
-                      The mountain is not a dungeon. It is a court.
-                      Every path is an argument. Every wound is a receipt.
-                      The Beacon remembers what you manage to extract —
-                      and forgets everything else.
-                    </div>
-                    <Divider />
-                    <div className="text-xs text-white/60">
-                      v{VERSION} • Modes: Menu / Map / Location / Combat / Beacon
-                    </div>
+                <div className="mt-6 rounded-3xl ui-panel-soft p-4">
+                  <div className="ui-runic text-white/60">BEACON HOLDINGS</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {Object.keys(state.meta.bank).map((k) => (
+                      <Pill key={k}>{mat(k)?.name || k}: {state.meta.bank[k] || 0}</Pill>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -1240,11 +1916,11 @@
 
         const SetupWeaponScreen = () => (
           <div className="relative z-10 min-h-screen flex items-center justify-center">
-            <div className="w-full max-w-6xl px-4 md:px-6">
-              <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8">
-                <div className="text-sm uppercase tracking-[0.22em] text-white/60">Preparation</div>
-                <div className="text-2xl md:text-3xl font-semibold mt-1">Choose your armament</div>
-                <div className="text-white/70 mt-2">Only the first set of choices. You’ll earn specialization after blood and XP.</div>
+            <div className="w-full max-w-6xl px-4 md:px-6 pt-32 pb-10">
+              <div className="ui-panel rounded-3xl p-6 md:p-8">
+                <div className="ui-runic text-white/60">PREPARATION</div>
+                <div className="ui-title text-3xl md:text-4xl font-bold mt-2">Choose your armament</div>
+                <div className="text-white/70 mt-2">Only the first set of choices. Specialization comes after XP.</div>
                 <Divider />
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   {WEAPONS.map((w) => (
@@ -1253,7 +1929,7 @@
                       onClick={() => chooseWeapon(w.key)}
                       className="rounded-3xl p-5 border text-left transition hover:bg-white/5 border-white/10 bg-white/5"
                     >
-                      <div className="text-xl font-semibold">{w.name}</div>
+                      <div className="ui-title text-2xl font-bold">{w.name}</div>
                       <div className="text-sm text-white/70 mt-1">{w.tagline}</div>
                       <div className="text-xs text-white/60 mt-3">
                         Bias: Might {fmtBonus(w.bias.might)} • Finesse {fmtBonus(w.bias.finesse)} • Wits {fmtBonus(w.bias.wits)} • Will {fmtBonus(w.bias.will)}
@@ -1268,11 +1944,11 @@
 
         const SetupStyleScreen = () => (
           <div className="relative z-10 min-h-screen flex items-center justify-center">
-            <div className="w-full max-w-6xl px-4 md:px-6">
-              <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8">
-                <div className="text-sm uppercase tracking-[0.22em] text-white/60">Preparation</div>
-                <div className="text-2xl md:text-3xl font-semibold mt-1">Choose your discipline</div>
-                <div className="text-white/70 mt-2">Your first real identity. Specialization comes later.</div>
+            <div className="w-full max-w-6xl px-4 md:px-6 pt-32 pb-10">
+              <div className="ui-panel rounded-3xl p-6 md:p-8">
+                <div className="ui-runic text-white/60">PREPARATION</div>
+                <div className="ui-title text-3xl md:text-4xl font-bold mt-2">Choose your discipline</div>
+                <div className="text-white/70 mt-2">Your first real identity. The mountain will test it.</div>
                 <Divider />
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   {weaponObj?.styles.map((s) => (
@@ -1281,7 +1957,7 @@
                       onClick={() => chooseStyle(s.key)}
                       className="rounded-3xl p-5 border text-left transition hover:bg-white/5 border-white/10 bg-white/5"
                     >
-                      <div className="text-xl font-semibold">{s.name}</div>
+                      <div className="ui-title text-2xl font-bold">{s.name}</div>
                       <div className="text-sm text-white/70 mt-1">{s.desc}</div>
                     </button>
                   ))}
@@ -1293,311 +1969,299 @@
 
         const SetupPrologueScreen = () => (
           <div className="relative z-10 min-h-screen flex items-center justify-center">
-            <div className="w-full max-w-5xl px-4 md:px-6">
-              <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8">
-                <div className="text-sm uppercase tracking-[0.22em] text-white/60">Prologue</div>
-                <div className="text-2xl md:text-3xl font-semibold mt-1">The mountain accepts your name… for now.</div>
-                <div className="text-white/70 mt-3 leading-relaxed">
-                  You arrive at the Beacon Gate with your chosen discipline.
-                  The air is thin, and the light feels <span className="text-white font-semibold">measured</span>.
-                  <br /><br />
-                  You will fight for a few steps. Gain XP. Then the mountain will offer you
-                  <span className="text-white font-semibold"> specialization</span>.
+            <div className="w-full max-w-5xl px-4 md:px-6 pt-32 pb-10">
+              <div className="ui-panel rounded-3xl p-6 md:p-8">
+                <div className="ui-runic text-white/60">PROLOGUE</div>
+                <div className="ui-title text-3xl md:text-4xl font-bold mt-2">The gate remembers your footsteps.</div>
+                <div className="text-white/75 mt-4 leading-relaxed">
+                  You begin at Beacon Gate. You’ll fight a little. Gain XP. Then the mountain offers a specialization.
                 </div>
                 <Divider />
-                <div className="flex flex-wrap gap-3 items-center">
+                <div className="flex flex-wrap gap-2">
                   <Pill>Title: {state.player.title}</Pill>
                   <Pill>HP {state.player.hp}/{state.player.hpMax}</Pill>
                   <Pill>Promo at {state.player.nextPromoAt} XP</Pill>
                 </div>
-                <div className="mt-5">
-                  <Button onClick={prologueContinue}>Open the Map</Button>
+                <Divider />
+                <Button onClick={prologueContinue}>Open the Map</Button>
+              </div>
+            </div>
+          </div>
+        );
+
+        const MapScreen = () => (
+          <div className="relative z-10 min-h-screen">
+            <div className="mx-auto max-w-6xl px-4 md:px-6 pt-32 pb-10">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                <div className="lg:col-span-8">
+                  <div className="ui-panel rounded-3xl overflow-hidden relative h-[72vh]">
+                    <svg viewBox="0 0 100 100" className="w-full h-full">
+                      {/* subtle connection lines */}
+                      {CONNECTIONS.map(([a,b], i) => {
+                        const A = locById(a), B = locById(b);
+                        if (!A || !B) return null;
+                        if (A.tier > revealTier || B.tier > revealTier) return null;
+                        const near = (a === state.run.here || b === state.run.here);
+                        return (
+                          <line
+                            key={i}
+                            x1={A.x} y1={A.y}
+                            x2={B.x} y2={B.y}
+                            stroke={near ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.10)"}
+                            strokeWidth={near ? 1.8 : 1.2}
+                            opacity={near ? 1 : 0.85}
+                          />
+                        );
+                      })}
+
+                      {/* location icons */}
+                      {LOCATIONS.map((L) => {
+                        if (L.tier > revealTier) return null;
+                        const isHere = L.id === state.run.here;
+                        const isReach = reachable.has(L.id);
+                        const safe = isSafeLocation(L, state.player.builtBeacons);
+
+                        return (
+                          <g
+                            key={L.id}
+                            transform={`translate(${L.x} ${L.y})`}
+                            className={isReach ? "cursor-pointer" : ""}
+                            onClick={() => { if (isReach && !isHere) travelTo(L.id); }}
+                            opacity={isHere ? 1 : (isReach ? 0.95 : 0.55)}
+                          >
+                            <MapIcon kind={L.kind} safe={safe} active={isHere} />
+                            <text x="14" y="4" fontSize="3.2" fill="rgba(255,255,255,0.72)">
+                              {L.name}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+
+                    <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-3">
+                      <div className="rounded-2xl ui-panel-soft px-3 py-2">
+                        <div className="ui-runic text-white/60">MAP</div>
+                        <div className="text-sm text-white/85 mt-2">
+                          You are at <span className="font-semibold">{here?.name}</span>.
+                        </div>
+                        <div className="text-xs text-white/60 mt-1">
+                          Visible depth: <span className="text-white/85 font-semibold">{revealTier}</span> • Reachable icons glow.
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl ui-panel-soft px-3 py-2">
+                        <div className="ui-runic text-white/60">LEGEND</div>
+                        <div className="text-xs text-white/70 mt-2 space-y-1">
+                          <div>⌬ Beacon • ⌂ Safe • ⟐ Ruin</div>
+                          <div>⟁ Pass • ✦ Shrine • • Wild</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-4">
+                  <div className="ui-panel rounded-3xl p-5 h-[72vh] overflow-auto">
+                    <div className="ui-runic text-white/60">ADJACENT PLACES</div>
+                    <div className="ui-title text-2xl font-bold mt-2">Choose where to go</div>
+                    <div className="text-sm text-white/70 mt-2">
+                      Travel is only between connected locations.
+                    </div>
+                    <Divider />
+                    <div className="space-y-2">
+                      {neighborsOf(state.run.here)
+                        .map(id => locById(id))
+                        .filter(Boolean)
+                        .filter(L => L.tier <= revealTier)
+                        .map((L) => {
+                          const safe = isSafeLocation(L, state.player.builtBeacons);
+                          return (
+                            <button
+                              key={L.id}
+                              onClick={() => travelTo(L.id)}
+                              className="w-full text-left rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition p-4"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="font-semibold">{L.name}</div>
+                                <div className="text-xs text-white/60">Tier {L.tier}</div>
+                              </div>
+                              <div className="text-xs text-white/60 mt-1">
+                                {safe ? "Safe" : "Hostile"} • {L.kind} • {REGION_NAME[L.tier]}
+                              </div>
+                            </button>
+                          );
+                        })}
+                    </div>
+
+                    <Divider />
+                    <div className="text-sm font-semibold">Pack (unextracted)</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {Object.keys(state.player.pack).map((k) => (
+                        <Pill key={k}>{mat(k)?.name || k}: {state.player.pack[k] || 0}</Pill>
+                      ))}
+                    </div>
+
+                    <Divider />
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="ghost" onClick={() => goMode("location")}>Return</Button>
+                      <Button variant="gold" onClick={enterBeacon}>Beacon</Button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         );
 
-        const MapScreen = () => {
-          const revealTier = clamp(1 + (state.meta.legacy.revealHints || 0), 1, 3);
-
-          return (
-            <div className="relative z-10 min-h-screen">
-              <div className="absolute inset-0 top-28">
-                <div className="mx-auto max-w-6xl px-4 md:px-6 h-full">
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full pb-6">
-                    <div className="lg:col-span-8">
-                      <div className="rounded-3xl border border-white/10 bg-black/25 backdrop-blur-md h-[72vh] md:h-[76vh] overflow-hidden relative">
-                        {/* Big Mountain Map */}
-                        <div className="absolute inset-0">
-                          <svg viewBox="0 0 100 100" className="w-full h-full">
-                            {/* mountain mass */}
-                            <defs>
-                              <radialGradient id="mist" cx="50%" cy="25%" r="75%">
-                                <stop offset="0%" stopColor="rgba(255,255,255,0.06)" />
-                                <stop offset="60%" stopColor="rgba(255,255,255,0.02)" />
-                                <stop offset="100%" stopColor="rgba(0,0,0,0)" />
-                              </radialGradient>
-                              <linearGradient id="ridge" x1="0" y1="0" x2="1" y2="1">
-                                <stop offset="0%" stopColor="rgba(124,58,237,0.18)" />
-                                <stop offset="100%" stopColor="rgba(14,165,233,0.10)" />
-                              </linearGradient>
-                            </defs>
-
-                            {/* stylized ridgelines */}
-                            <path d="M0 85 C 12 70, 18 64, 28 60 C 36 56, 40 45, 48 40 C 58 34, 66 24, 74 24 C 82 24, 90 30, 100 36 L 100 100 L 0 100 Z"
-                              fill="rgba(255,255,255,0.03)" />
-                            <path d="M-5 88 C 10 72, 22 70, 34 64 C 44 59, 46 50, 56 44 C 66 38, 74 30, 86 30 C 94 30, 104 36, 110 40"
-                              stroke="url(#ridge)" strokeWidth="1.4" fill="none" opacity="0.7" />
-                            <path d="M-5 74 C 8 66, 18 58, 30 54 C 44 49, 52 40, 62 34 C 72 28, 82 20, 96 18"
-                              stroke="rgba(255,255,255,0.10)" strokeWidth="1.2" fill="none" opacity="0.8" />
-                            <path d="M0 64 C 18 58, 30 46, 42 40 C 56 34, 62 22, 74 16 C 86 10, 94 10, 100 12"
-                              stroke="rgba(255,255,255,0.08)" strokeWidth="1.2" fill="none" opacity="0.8" />
-
-                            {/* mist */}
-                            <rect x="0" y="0" width="100" height="100" fill="url(#mist)" opacity="0.9" />
-
-                            {/* connections (subtle) */}
-                            {CONNECTIONS.map(([a,b], i) => {
-                              const A = locById(a), B = locById(b);
-                              if (!A || !B) return null;
-
-                              // hide deeper connections if not revealed
-                              if (A.tier > revealTier || B.tier > revealTier) return null;
-
-                              const near = (a === state.run.here || b === state.run.here);
-                              return (
-                                <line
-                                  key={i}
-                                  x1={A.x} y1={A.y}
-                                  x2={B.x} y2={B.y}
-                                  stroke={near ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.10)"}
-                                  strokeWidth={near ? 1.8 : 1.2}
-                                  opacity={near ? 1 : 0.85}
-                                />
-                              );
-                            })}
-
-                            {/* location markers */}
-                            {LOCATIONS.map((L) => {
-                              const visible = L.tier <= revealTier;
-                              if (!visible) return null;
-
-                              const isHere = L.id === state.run.here;
-                              const isReach = reachable.has(L.id);
-                              const safe = isSafeLocation(L, state.player.builtBeacons);
-
-                              const color =
-                                L.tier === 1 ? "rgba(59,130,246,0.18)" :
-                                L.tier === 2 ? "rgba(245,158,11,0.16)" :
-                                "rgba(239,68,68,0.16)";
-
-                              const stroke =
-                                isHere ? "rgba(255,255,255,0.75)" :
-                                isReach ? "rgba(255,255,255,0.35)" :
-                                "rgba(255,255,255,0.14)";
-
-                              const ring =
-                                safe ? "rgba(34,197,94,0.45)" :
-                                isReach ? "rgba(124,58,237,0.45)" :
-                                "rgba(0,0,0,0)";
-
-                              return (
-                                <g key={L.id} className="cursor-pointer" onClick={() => {
-                                  if (isHere) return;
-                                  if (!isReach) return;
-                                  travelTo(L.id);
-                                }}>
-                                  <circle cx={L.x} cy={L.y} r={7.2} fill={color} stroke={stroke} strokeWidth={2} />
-                                  <circle cx={L.x} cy={L.y} r={11.5} fill="none" stroke={ring} strokeWidth={1.6} opacity={isHere || isReach || safe ? 1 : 0} />
-                                  <text x={L.x + 10} y={L.y + 3} fontSize="3.2" fill="rgba(255,255,255,0.68)">
-                                    {L.name}
-                                  </text>
-                                </g>
-                              );
-                            })}
-                          </svg>
-                        </div>
-
-                        {/* map legend */}
-                        <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-3">
-                          <div className="rounded-2xl bg-black/35 border border-white/10 backdrop-blur-md px-3 py-2">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-white/60">Map</div>
-                            <div className="text-sm text-white/80 mt-1">
-                              You are at <span className="font-semibold">{here?.name}</span>.
-                            </div>
-                            <div className="text-xs text-white/60 mt-1">
-                              Visible depth: <span className="text-white/85 font-semibold">{revealTier}</span> • Reachable places glow.
-                            </div>
-                          </div>
-
-                          <div className="rounded-2xl bg-black/35 border border-white/10 backdrop-blur-md px-3 py-2">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-white/60">Legend</div>
-                            <div className="text-xs text-white/70 mt-1">Green ring = safe (rest/extract). Purple ring = reachable.</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* right panel - adjacent list */}
-                    <div className="lg:col-span-4">
-                      <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-5 h-[72vh] md:h-[76vh] overflow-auto">
-                        <div className="text-sm uppercase tracking-[0.22em] text-white/60">Adjacent Places</div>
-                        <div className="text-xl font-semibold mt-2">Choose where to go</div>
-                        <div className="text-sm text-white/70 mt-2">
-                          Travel is only between connected locations. Difficulty rises toward the inner spires.
-                        </div>
-                        <Divider />
-                        <div className="space-y-2">
-                          {neighborsOf(state.run.here)
-                            .map(id => locById(id))
-                            .filter(Boolean)
-                            .filter(L => L.tier <= (1 + (state.meta.legacy.revealHints || 0)))
-                            .map((L) => {
-                              const safe = isSafeLocation(L, state.player.builtBeacons);
-                              return (
-                                <button
-                                  key={L.id}
-                                  onClick={() => travelTo(L.id)}
-                                  className="w-full text-left rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition p-4"
-                                >
-                                  <div className="flex items-center justify-between gap-3">
-                                    <div className="font-semibold">{L.name}</div>
-                                    <div className="text-xs text-white/60">Tier {L.tier}</div>
-                                  </div>
-                                  <div className="text-xs text-white/60 mt-1">
-                                    {safe ? "Safe" : "Hostile"} • {L.kind} • {REGION_NAME[L.tier]}
-                                  </div>
-                                </button>
-                              );
-                            })}
-                        </div>
-
-                        <Divider />
-                        <div className="text-sm font-semibold">Pack (unextracted)</div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {Object.keys(state.player.pack).map((k) => (
-                            <Pill key={k}>{mat(k)?.name || k}: {state.player.pack[k] || 0}</Pill>
-                          ))}
-                        </div>
-
-                        <Divider />
-                        <div className="flex flex-wrap gap-2">
-                          <Button variant="ghost" onClick={() => goMode("location")}>Return to Location</Button>
-                          <Button variant="gold" onClick={enterBeacon}>Beacon</Button>
-                        </div>
-                      </div>
-                    </div>
-
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        };
-
         const LocationScreen = () => {
           const L = here;
           const safe = hereSafe;
+          const odds = computeExploreOdds(state);
 
           return (
             <div className="relative z-10 min-h-screen">
-              <div className="absolute inset-0 top-28">
-                <div className="mx-auto max-w-6xl px-4 md:px-6 h-full">
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full pb-6">
-                    <div className="lg:col-span-8">
-                      <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8 h-[72vh] md:h-[76vh] overflow-auto">
-                        <div className="text-sm uppercase tracking-[0.22em] text-white/60">{REGION_NAME[L?.tier || 1]}</div>
-                        <div className="text-3xl md:text-4xl font-semibold mt-1">{L?.name}</div>
-                        <div className="text-white/70 mt-4 leading-relaxed">
-                          {L?.lore}
-                        </div>
+              <div className="mx-auto max-w-6xl px-4 md:px-6 pt-32 pb-10">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                  <div className="lg:col-span-8">
+                    <div className="ui-panel rounded-3xl p-6 md:p-8 h-[72vh] overflow-auto">
+                      <div className="ui-runic text-white/60">{REGION_NAME[L?.tier || 1].toUpperCase()}</div>
+                      <div className="ui-title text-4xl font-bold mt-2">{L?.name}</div>
+                      <div className="text-white/75 mt-4 leading-relaxed">{L?.lore}</div>
 
-                        <Divider />
+                      <Divider />
 
-                        <div className="flex flex-wrap gap-2 items-center">
-                          <Pill>{safe ? "Safe ground" : "Hostile ground"}</Pill>
-                          <Pill>Tier {L?.tier}</Pill>
-                          <Pill>Kind: {L?.kind}</Pill>
-                        </div>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <Pill>{safe ? "Safe ground" : "Hostile ground"}</Pill>
+                        <Pill>Tier {L?.tier}</Pill>
+                        <Pill>Kind: {L?.kind}</Pill>
+                      </div>
 
-                        <Divider />
+                      <Divider />
 
-                        <div className="text-sm uppercase tracking-[0.22em] text-white/60">What now?</div>
-                        <div className="mt-3 flex flex-wrap gap-3">
-                          <Button onClick={explore} disabled={state.run.inCombat}>Explore</Button>
-                          <Button onClick={search} variant="ghost" disabled={state.run.inCombat}>Search</Button>
-                          <Button onClick={rest} variant="ghost" disabled={state.run.inCombat}>Rest</Button>
-                          <Button onClick={() => goMode("map")} variant="ghost" disabled={state.run.inCombat}>Open Map</Button>
-                          <Button onClick={extractToBank} variant="gold" disabled={!safe || state.run.inCombat}
-                            title={safe ? "Bank your pack materials." : "Need a safe place."}>
-                            Extract
-                          </Button>
-                          <Button onClick={buildBeacon} variant="ghost" disabled={state.run.inCombat}
-                            title="Requires Portable Relay upgrade + materials (Relay Parts + Ward Coil)">
-                            Build Beacon
-                          </Button>
-                        </div>
+                      <div className="ui-runic text-white/60">ACTIONS</div>
+                      <div className="mt-3 flex flex-wrap gap-3">
+                        <Button
+                          onClick={explore}
+                          disabled={state.run.inCombat}
+                          tooltip={{
+                            title: safe ? "Explore (Safe)" : "Explore (Odds)",
+                            lines: safe
+                              ? ["Safe ground: combat disabled.", "You will trigger a non-combat event."]
+                              : [
+                                  `Combat: ${odds.combat}% • Random Event: ${odds.event}%`,
+                                  "Factors:",
+                                  ...odds.factors.map(f => `• ${f}`)
+                                ],
+                          }}
+                        >
+                          Explore
+                        </Button>
 
-                        <Divider />
-                        <div className="text-sm font-semibold">Pack (unextracted)</div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {Object.keys(state.player.pack).map((k) => (
-                            <Pill key={k}>{mat(k)?.name || k}: {state.player.pack[k] || 0}</Pill>
-                          ))}
-                        </div>
+                        <Button
+                          onClick={stirUpNoGood}
+                          variant="ghost"
+                          disabled={state.run.inCombat}
+                          tooltip={{
+                            title: "Stir Up No Good",
+                            lines: safe
+                              ? ["Safe ground refuses to answer provocation."]
+                              : ["Forces combat in this area.", "No odds. No mercy."],
+                          }}
+                        >
+                          Stir Up No Good
+                        </Button>
 
-                        <Divider />
-                        <div className="text-xs text-white/60 leading-relaxed">
-                          Safe places have no monsters when you rest. Hostile places can ambush you when you push your luck.
-                          Extraction only works in safe ground.
-                        </div>
+                        <Button onClick={rest} variant="ghost" disabled={state.run.inCombat}>
+                          Rest
+                        </Button>
+
+                        <Button onClick={extractToBank} variant="gold" disabled={!safe || state.run.inCombat}
+                          tooltip={{
+                            title: "Extract",
+                            lines: safe
+                              ? ["Banks your pack materials permanently.", "Only possible on safe ground."]
+                              : ["Requires safety: Beacon, refuge, or built ward."],
+                          }}
+                        >
+                          Extract
+                        </Button>
+
+                        <Button onClick={() => goMode("map")} variant="ghost" disabled={state.run.inCombat}>
+                          Open Map
+                        </Button>
+
+                        <Button
+                          onClick={buildBeacon}
+                          variant="ghost"
+                          disabled={state.run.inCombat}
+                          tooltip={{
+                            title: "Build Beacon",
+                            lines: [
+                              "Requires Beacon upgrade: Portable Relay",
+                              "Cost (from pack): Relay Parts x1, Ward Coil x1",
+                              "Turns this location into safe ground.",
+                            ],
+                          }}
+                        >
+                          Build Beacon
+                        </Button>
+                      </div>
+
+                      <Divider />
+                      <div className="text-sm font-semibold">Pack (unextracted)</div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {Object.keys(state.player.pack).map((k) => (
+                          <Pill key={k}>{mat(k)?.name || k}: {state.player.pack[k] || 0}</Pill>
+                        ))}
                       </div>
                     </div>
+                  </div>
 
-                    <div className="lg:col-span-4">
-                      <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-5 h-[72vh] md:h-[76vh] overflow-auto">
-                        <div className="text-sm uppercase tracking-[0.22em] text-white/60">Character</div>
-                        <div className="text-xl font-semibold mt-2">{state.player.title}</div>
-                        <div className="text-sm text-white/70 mt-1">
-                          Weapon: {weaponObj?.name || "—"} • Style: {styleObj?.name || "—"}
-                        </div>
-                        <div className="text-sm text-white/70 mt-1">
-                          {elementObj ? `Affinity: ${elementObj.name}` : state.player.crossStyle ? `Cross: ${WEAPONS.flatMap(w=>w.styles).find(s=>s.key===state.player.crossStyle)?.name}` : "Unspecialized"}
-                        </div>
-                        <Divider />
-                        <div className="grid grid-cols-2 gap-3">
-                          {["might","finesse","wits","will"].map((k) => (
-                            <div key={k} className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                              <div className="text-[10px] uppercase tracking-[0.22em] text-white/60">{k}</div>
-                              <div className="text-lg font-semibold mt-1">{fmtBonus(state.player.stats[k])}</div>
+                  <div className="lg:col-span-4">
+                    <div className="ui-panel rounded-3xl p-5 h-[72vh] overflow-auto">
+                      <div className="ui-runic text-white/60">CHARACTER</div>
+                      <div className="ui-title text-2xl font-bold mt-2">{state.player.title}</div>
+                      <div className="text-sm text-white/70 mt-2">
+                        Weapon: {weaponObj?.name || "—"} • Style: {styleObj?.name || "—"}
+                      </div>
+                      <div className="text-sm text-white/70 mt-1">
+                        {elementObj ? `Affinity: ${elementObj.name}` : state.player.crossStyle ? `Cross: ${WEAPONS.flatMap(w=>w.styles).find(s=>s.key===state.player.crossStyle)?.name}` : "Unspecialized"}
+                      </div>
+
+                      <Divider />
+                      <div className="grid grid-cols-2 gap-3">
+                        {["might","finesse","wits","will"].map((k) => (
+                          <div key={k} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                            <div className="ui-runic text-white/60">{k.toUpperCase()}</div>
+                            <div className="text-lg font-semibold mt-2">{fmtBonus(state.player.stats[k])}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <Divider />
+                      <div className="text-sm font-semibold">Known Techniques</div>
+                      <div className="text-xs text-white/60 mt-1">Event-granted skills appear here.</div>
+                      <div className="mt-3 space-y-2">
+                        {skills.filter(s => s.tag === "affinity" || s.tag === "borrowed").slice(0, 6).map((s) => (
+                          <div key={s.key} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                            <div className="flex items-center justify-between">
+                              <div className="font-semibold">{s.name}</div>
+                              <div className="text-[10px] text-white/50 uppercase">{s.tag}</div>
                             </div>
-                          ))}
-                        </div>
+                            <div className="text-xs text-white/60 mt-1">{s.desc}</div>
+                          </div>
+                        ))}
+                        {skills.filter(s => s.tag === "affinity" || s.tag === "borrowed").length === 0 ? (
+                          <div className="text-sm text-white/50">None yet.</div>
+                        ) : null}
+                      </div>
 
-                        <Divider />
-                        <div className="text-sm font-semibold">Actions (combat set)</div>
-                        <div className="text-xs text-white/60 mt-1">Shown fully during combat.</div>
-                        <div className="mt-3 space-y-2">
-                          {skills.slice(0, 6).map((s) => (
-                            <div key={s.key} className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                              <div className="flex items-center justify-between">
-                                <div className="font-semibold">{s.name}</div>
-                                <div className="text-xs text-white/50">{s.kind}</div>
-                              </div>
-                              <div className="text-xs text-white/60 mt-1">{s.desc}</div>
-                            </div>
-                          ))}
-                        </div>
-
-                        <Divider />
-                        <div className="flex flex-wrap gap-2">
-                          <Button variant="gold" onClick={enterBeacon}>Beacon</Button>
-                          <Button variant="ghost" onClick={() => goMode("map")}>Map</Button>
-                        </div>
+                      <Divider />
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="ghost" onClick={() => goMode("map")}>Map</Button>
+                        <Button variant="gold" onClick={enterBeacon}>Beacon</Button>
                       </div>
                     </div>
-
                   </div>
                 </div>
               </div>
@@ -1607,78 +2271,84 @@
 
         const CombatScreen = () => {
           const enemy = state.run.enemy;
-
           return (
             <div className="relative z-10 min-h-screen">
-              <div className="absolute inset-0 top-28">
-                <div className="mx-auto max-w-6xl px-4 md:px-6 h-full pb-6">
-                  <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8 h-[76vh] overflow-hidden relative">
-                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
-                      <div className="max-w-2xl">
-                        <div className="text-sm uppercase tracking-[0.22em] text-white/60">Combat</div>
-                        <div className="text-3xl md:text-4xl font-semibold mt-1">{enemy?.name}</div>
-                        <div className="text-white/70 mt-3 leading-relaxed">{enemy?.desc}</div>
+              <div className="mx-auto max-w-6xl px-4 md:px-6 pt-32 pb-10">
+                <div className="ui-panel rounded-3xl p-6 md:p-8 h-[76vh] overflow-hidden relative">
+                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
+                    <div className="max-w-2xl">
+                      <div className="ui-runic text-white/60">COMBAT</div>
+                      <div className="ui-title text-4xl font-bold mt-2">{enemy?.name}</div>
+                      <div className="text-white/75 mt-4 leading-relaxed">{enemy?.desc}</div>
 
-                        <Divider />
+                      <Divider />
 
-                        <div className="flex flex-wrap gap-2">
-                          <Pill>Enemy HP {state.run.enemyHP}/{enemy?.hp}</Pill>
-                          <Pill>Enemy DR {enemy?.dr}</Pill>
-                          <Pill>Attack DR {enemy?.attackDR}</Pill>
-                          <Pill>Tier {enemy?.tier}</Pill>
-                        </div>
-
-                        <Divider />
-
-                        <div className="text-sm uppercase tracking-[0.22em] text-white/60">Choose an action</div>
-                        <div className="mt-3 flex flex-wrap gap-3">
-                          <Button onClick={() => combatAction("attack")}>Attack</Button>
-                          <Button variant="ghost" onClick={() => combatAction("defend")}>Brace</Button>
-                          <Button variant="ghost" onClick={() => combatAction("maneuver")}>Maneuver</Button>
-                          {skills
-                            .filter((s) => s.kind === "action" && !["attack","defend","maneuver"].includes(s.key))
-                            .slice(0, 6)
-                            .map((s) => (
-                              <Button key={s.key} variant="ghost" onClick={() => combatAction(s.key)}>
-                                {s.name}
-                              </Button>
-                            ))}
-                        </div>
-
-                        <div className="mt-6 text-xs text-white/60">
-                          Combat is its own mode now. When it ends, you return to the location.
-                        </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Pill>Enemy HP {state.run.enemyHP}/{enemy?.hp}</Pill>
+                        <Pill>Enemy DR {enemy?.dr}</Pill>
+                        <Pill>Attack DR {enemy?.attackDR}</Pill>
+                        <Pill>Tier {enemy?.tier}</Pill>
                       </div>
 
-                      {/* right side: minimal player pane */}
-                      <div className="w-full md:w-[340px] shrink-0">
-                        <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-                          <div className="text-sm uppercase tracking-[0.22em] text-white/60">You</div>
-                          <div className="text-xl font-semibold mt-2">{state.player.title}</div>
-                          <div className="text-sm text-white/70 mt-1">HP {state.player.hp}/{state.player.hpMax}</div>
+                      <Divider />
 
-                          <Divider />
+                      <div className="ui-runic text-white/60">ACTIONS</div>
+                      <div className="mt-3 flex flex-wrap gap-3">
+                        {/* core */}
+                        <Button onClick={() => combatAction("attack")}>Attack</Button>
+                        <Button variant="ghost" onClick={() => combatAction("defend")}>Brace</Button>
+                        <Button variant="ghost" onClick={() => combatAction("maneuver")}>Maneuver</Button>
 
-                          <div className="grid grid-cols-2 gap-3">
-                            {["might","finesse","wits","will"].map((k) => (
-                              <div key={k} className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                                <div className="text-[10px] uppercase tracking-[0.22em] text-white/60">{k}</div>
-                                <div className="text-lg font-semibold mt-1">{fmtBonus(state.player.stats[k])}</div>
-                              </div>
-                            ))}
-                          </div>
+                        {/* style + event actions */}
+                        {skills
+                          .filter((s) => s.kind === "action" && !["attack","defend","maneuver"].includes(s.key))
+                          .slice(0, 8)
+                          .map((s) => (
+                            <Button
+                              key={s.key}
+                              variant="ghost"
+                              onClick={() => combatAction(s.key)}
+                              tooltip={{
+                                title: s.name,
+                                lines: [s.desc, s.tag ? `Tag: ${s.tag}` : ""].filter(Boolean),
+                              }}
+                            >
+                              {s.name}
+                            </Button>
+                          ))}
+                      </div>
 
-                          <Divider />
-                          <div className="text-xs text-white/60">
-                            Pack is at risk. Extraction is only possible on safe ground.
-                          </div>
-                        </div>
+                      <div className="mt-6 text-xs text-white/60">
+                        After combat, you’ll get a transition summary: enemy, XP, loot.
                       </div>
                     </div>
 
-                    {/* Vignette */}
-                    <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_60%_at_50%_40%,rgba(0,0,0,0),rgba(0,0,0,0.55))]" />
+                    <div className="w-full md:w-[340px] shrink-0">
+                      <div className="rounded-3xl ui-panel-soft p-5">
+                        <div className="ui-runic text-white/60">YOU</div>
+                        <div className="ui-title text-2xl font-bold mt-2">{state.player.title}</div>
+                        <div className="text-sm text-white/80 mt-2">HP {state.player.hp}/{state.player.hpMax}</div>
+
+                        <Divider />
+
+                        <div className="grid grid-cols-2 gap-3">
+                          {["might","finesse","wits","will"].map((k) => (
+                            <div key={k} className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                              <div className="ui-runic text-white/60">{k.toUpperCase()}</div>
+                              <div className="text-lg font-semibold mt-2">{fmtBonus(state.player.stats[k])}</div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <Divider />
+                        <div className="text-xs text-white/60">
+                          Pack is at risk. Extraction only on safe ground.
+                        </div>
+                      </div>
+                    </div>
                   </div>
+
+                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_60%_at_50%_40%,rgba(0,0,0,0),rgba(0,0,0,0.55))]" />
                 </div>
               </div>
             </div>
@@ -1687,25 +2357,23 @@
 
         const DeadScreen = () => (
           <div className="relative z-10 min-h-screen flex items-center justify-center">
-            <div className="w-full max-w-5xl px-4 md:px-6">
-              <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8">
-                <div className="text-sm uppercase tracking-[0.22em] text-white/60">Fallen</div>
-                <div className="text-3xl md:text-4xl font-semibold mt-1">The mountain keeps the rest.</div>
-                <div className="text-white/70 mt-3 leading-relaxed">
-                  You died. Unextracted materials are gone.
-                  The Beacon grants you Echoes — not mercy.
+            <div className="w-full max-w-5xl px-4 md:px-6 pt-32 pb-10">
+              <div className="ui-panel rounded-3xl p-6 md:p-8">
+                <div className="ui-runic text-white/60">FALLEN</div>
+                <div className="ui-title text-4xl font-bold mt-2">The mountain keeps the rest.</div>
+                <div className="text-white/75 mt-4 leading-relaxed">
+                  Unextracted materials are gone. The Beacon awards Echoes. That is all.
                 </div>
                 <Divider />
                 <div className="flex flex-wrap gap-2">
                   <Pill>Echoes {state.meta.echoes}</Pill>
-                  <Pill>Banked mats: {Object.values(state.meta.bank).reduce((a,b)=>a+b,0)}</Pill>
-                  <Pill>XP (this run): {state.player.xp}</Pill>
+                  <Pill>Banked mats {Object.values(state.meta.bank).reduce((a,b)=>a+b,0)}</Pill>
+                  <Pill>XP this exile {state.player.xp}</Pill>
                 </div>
                 <Divider />
                 <div className="flex flex-wrap gap-3">
                   <Button variant="gold" onClick={enterBeacon}>Enter Beacon</Button>
-                  <Button variant="ghost" onClick={beginNewExile}>New Exile</Button>
-                  <Button variant="ghost" onClick={() => goMode("menu")}>Back to Menu</Button>
+                  <Button variant="ghost" onClick={() => goMode("menu")}>Menu</Button>
                 </div>
               </div>
             </div>
@@ -1714,117 +2382,109 @@
 
         const BeaconScreen = () => (
           <div className="relative z-10 min-h-screen">
-            <div className="absolute inset-0 top-28">
-              <div className="mx-auto max-w-6xl px-4 md:px-6 h-full pb-6">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full">
-                  <div className="lg:col-span-7">
-                    <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8 h-[76vh] overflow-auto">
-                      <div className="text-sm uppercase tracking-[0.22em] text-white/60">The Beacon</div>
-                      <div className="text-3xl md:text-4xl font-semibold mt-1">Upgrades</div>
-                      <div className="text-white/70 mt-3 leading-relaxed">
-                        You do not buy power with coin. You bind it with proof.
-                        Echoes are memory. Materials are <span className="text-white font-semibold">evidence</span>.
-                      </div>
+            <div className="mx-auto max-w-6xl px-4 md:px-6 pt-32 pb-10">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                <div className="lg:col-span-7">
+                  <div className="ui-panel rounded-3xl p-6 md:p-8 h-[76vh] overflow-auto">
+                    <div className="ui-runic text-white/60">THE BEACON</div>
+                    <div className="ui-title text-4xl font-bold mt-2">Upgrades</div>
+                    <div className="text-white/75 mt-4 leading-relaxed">
+                      Echoes are memory. Materials are evidence. Bind them into power.
+                    </div>
 
-                      <Divider />
-                      <div className="flex flex-wrap gap-2">
-                        <Pill>Echoes: {state.meta.echoes}</Pill>
-                        <Pill>Reveal: {state.meta.legacy.revealHints || 0}</Pill>
-                        <Pill>Start HP: {state.meta.legacy.startHP || 0}</Pill>
-                        <Pill>Safe Rest: {state.meta.legacy.safeRest || 0}</Pill>
-                        <Pill>Build Beacons: {state.meta.legacy.canBuildBeacons ? "Yes" : "No"}</Pill>
-                        <Pill>Void Marks: {state.meta.legacy.voidMarks || 0}</Pill>
-                      </div>
+                    <Divider />
+                    <div className="flex flex-wrap gap-2">
+                      <Pill>Echoes: {state.meta.echoes}</Pill>
+                      <Pill>Reveal: {state.meta.legacy.revealHints || 0}</Pill>
+                      <Pill>Start HP: {state.meta.legacy.startHP || 0}</Pill>
+                      <Pill>Safe Rest: {state.meta.legacy.safeRest || 0}</Pill>
+                      <Pill>Build Beacons: {state.meta.legacy.canBuildBeacons ? "Yes" : "No"}</Pill>
+                      <Pill>Void Marks: {state.meta.legacy.voidMarks || 0}</Pill>
+                    </div>
 
-                      <Divider />
-                      <div className="space-y-3">
-                        {BEACON_UPGRADES.map((up) => {
-                          const canAffordEcho = state.meta.echoes >= up.costEchoes;
-                          const canAffordMats = Object.entries(up.costMats || {}).every(([k,amt]) => (state.meta.bank[k] || 0) >= amt);
-                          const ok = canAffordEcho && canAffordMats;
+                    <Divider />
+                    <div className="space-y-3">
+                      {BEACON_UPGRADES.map((up) => {
+                        const canAffordEcho = state.meta.echoes >= up.costEchoes;
+                        const canAffordMats = Object.entries(up.costMats || {}).every(([k,amt]) => (state.meta.bank[k] || 0) >= amt);
+                        const ok = canAffordEcho && canAffordMats;
 
-                          return (
-                            <div key={up.key} className="rounded-3xl border border-white/10 bg-white/5 p-5">
-                              <div className="flex items-start justify-between gap-4">
-                                <div>
-                                  <div className="text-xl font-semibold">{up.name}</div>
-                                  <div className="text-sm text-white/70 mt-1">{up.desc}</div>
-                                  <div className="text-xs text-white/60 mt-3">
-                                    Cost: <span className="text-white/80 font-semibold">{up.costEchoes}</span> Echoes
-                                    {Object.keys(up.costMats || {}).length ? (
-                                      <>
-                                        {" "}•{" "}
-                                        {Object.entries(up.costMats).map(([k,amt]) => (
-                                          <span key={k} className="mr-2">
-                                            {mat(k)?.name || k} <span className="text-white/80 font-semibold">x{amt}</span>
-                                          </span>
-                                        ))}
-                                      </>
-                                    ) : null}
-                                  </div>
-                                </div>
-                                <div>
-                                  <Button variant={ok ? "primary" : "ghost"} disabled={!ok} onClick={() => buyUpgrade(up)}>
-                                    Bind
-                                  </Button>
+                        return (
+                          <div key={up.key} className="rounded-3xl ui-panel-soft p-5">
+                            <div className="flex items-start justify-between gap-4">
+                              <div>
+                                <div className="ui-title text-2xl font-bold">{up.name}</div>
+                                <div className="text-sm text-white/70 mt-2">{up.desc}</div>
+                                <div className="text-xs text-white/60 mt-3">
+                                  Cost: <span className="text-white/85 font-semibold">{up.costEchoes}</span> Echoes
+                                  {Object.keys(up.costMats || {}).length ? (
+                                    <>
+                                      {" "}•{" "}
+                                      {Object.entries(up.costMats).map(([k,amt]) => (
+                                        <span key={k} className="mr-2">
+                                          {mat(k)?.name || k} <span className="text-white/85 font-semibold">x{amt}</span>
+                                        </span>
+                                      ))}
+                                    </>
+                                  ) : null}
                                 </div>
                               </div>
+                              <div>
+                                <Button variant={ok ? "primary" : "ghost"} disabled={!ok} onClick={() => buyUpgrade(up)}>
+                                  Bind
+                                </Button>
+                              </div>
                             </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="lg:col-span-5">
-                    <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 h-[76vh] overflow-auto">
-                      <div className="text-sm uppercase tracking-[0.22em] text-white/60">Bank</div>
-                      <div className="text-2xl font-semibold mt-2">Extracted Materials</div>
-                      <div className="text-white/70 mt-2">Only what you extracted survives.</div>
-                      <Divider />
-                      <div className="space-y-2">
-                        {Object.keys(state.meta.bank).map((k) => (
-                          <div key={k} className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                            <div className="flex items-center justify-between">
-                              <div className="font-semibold">{mat(k)?.name || k}</div>
-                              <div className="text-sm text-white/80 font-semibold">{state.meta.bank[k] || 0}</div>
-                            </div>
-                            <div className="text-xs text-white/60 mt-1">{mat(k)?.desc || "—"}</div>
                           </div>
-                        ))}
-                      </div>
-
-                      <Divider />
-                      <div className="flex flex-wrap gap-2">
-                        <Button variant="ghost" onClick={() => goMode("menu")}>Menu</Button>
-                        <Button onClick={beginNewExile}>New Exile</Button>
-                        <Button variant="gold" onClick={wakeForAnotherRun}>Wake (to Menu)</Button>
-                      </div>
-
-                      <Divider />
-                      <div className="text-xs text-white/60 leading-relaxed">
-                        In later versions, Beacon upgrades will unlock new map layers, new enemy ecologies,
-                        and altered routes through the mountain.
-                      </div>
+                        );
+                      })}
                     </div>
                   </div>
+                </div>
 
+                <div className="lg:col-span-5">
+                  <div className="ui-panel rounded-3xl p-6 h-[76vh] overflow-auto">
+                    <div className="ui-runic text-white/60">BANK</div>
+                    <div className="ui-title text-3xl font-bold mt-2">Extracted Materials</div>
+                    <Divider />
+                    <div className="space-y-2">
+                      {Object.keys(state.meta.bank).map((k) => (
+                        <div key={k} className="rounded-2xl ui-panel-soft p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="font-semibold">{mat(k)?.name || k}</div>
+                            <div className="text-sm text-white/90 font-semibold">{state.meta.bank[k] || 0}</div>
+                          </div>
+                          <div className="text-xs text-white/60 mt-2">{mat(k)?.desc || "—"}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <Divider />
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="ghost" onClick={() => goMode("menu")}>Menu</Button>
+                      <Button onClick={beginNewExile}>New Exile</Button>
+                    </div>
+
+                    <Divider />
+                    <div className="text-xs text-white/60 leading-relaxed">
+                      Next wave later: actual imported asset packs (sprites/UI textures) + sound + event chainlets.
+                      For now, the pixel backdrop is generated art, so it’s “real” and lightweight.
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         );
 
-        // ---------------------------
-        // Promotion Modal (kept; now fits new flow)
-        // ---------------------------
+        // Promotion Modal
         const PromotionModal = () => (
           <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-            <div className="max-w-2xl w-full rounded-3xl border border-white/10 bg-zinc-950/80 backdrop-blur p-5">
+            <div className="max-w-2xl w-full ui-panel rounded-3xl p-5 wipe">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-xl font-semibold">Specialization Unlocked</div>
-                  <div className="text-sm text-white/70 mt-1">
+                  <div className="ui-title text-2xl font-bold">Specialization Unlocked</div>
+                  <div className="text-sm text-white/70 mt-2">
                     Choose one: bind an Element, or cross-train a Style.
                   </div>
                 </div>
@@ -1834,7 +2494,7 @@
               </div>
               <Divider />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="rounded-3xl border border-white/10 p-4 bg-white/5">
+                <div className="rounded-3xl ui-panel-soft p-4">
                   <div className="font-semibold">Bind an Element</div>
                   <div className="text-sm text-white/70 mt-1">Sharper identity. Titles evolve.</div>
                   <div className="grid grid-cols-2 gap-2 mt-3">
@@ -1846,7 +2506,7 @@
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-white/10 p-4 bg-white/5">
+                <div className="rounded-3xl ui-panel-soft p-4">
                   <div className="font-semibold">Cross-Train a Style</div>
                   <div className="text-sm text-white/70 mt-1">More options. Less raw power.</div>
                   <div className="grid grid-cols-2 gap-2 mt-3">
@@ -1866,28 +2526,66 @@
           </div>
         );
 
+        // Transition Overlay
+        const TransitionOverlay = () => (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+            <div className="max-w-xl w-full ui-panel rounded-3xl p-5 wipe">
+              <div className="ui-runic text-white/60">TRANSITION</div>
+              <div className="ui-title text-3xl font-bold mt-2">{state.transition.title}</div>
+              {state.transition.subtitle ? <div className="text-white/70 mt-2">{state.transition.subtitle}</div> : null}
+              <Divider />
+              <div className="space-y-2">
+                {state.transition.bullets.map((b, i) => (
+                  <div key={i} className="text-sm text-white/80">• {b}</div>
+                ))}
+              </div>
+              {state.transition.lore ? (
+                <>
+                  <Divider />
+                  <div className="text-sm text-indigo-200/90 leading-relaxed">
+                    {state.transition.lore}
+                  </div>
+                </>
+              ) : null}
+              <Divider />
+              <div className="flex justify-end gap-2">
+                <Button variant="primary" onClick={closeTransition}>Continue</Button>
+              </div>
+            </div>
+          </div>
+        );
+
+        // Screen router
+        const screen =
+          state.mode === "menu" ? <MenuScreen/> :
+          state.mode === "setup_weapon" ? <SetupWeaponScreen/> :
+          state.mode === "setup_style" ? <SetupStyleScreen/> :
+          state.mode === "setup_prologue" ? <SetupPrologueScreen/> :
+          state.mode === "map" ? <MapScreen/> :
+          state.mode === "location" ? <LocationScreen/> :
+          state.mode === "combat" ? <CombatScreen/> :
+          state.mode === "beacon" ? <BeaconScreen/> :
+          state.mode === "dead" ? <DeadScreen/> :
+          <MenuScreen/>;
+
         return (
           <div className="relative min-h-screen text-white overflow-hidden">
-            <Background mode={state.mode} />
+            {/* Pixel backdrop counts as "real art" and is mode-themed */}
+            <PixelBackdrop mode={state.mode} seed={state.rngSeed} />
+
             <TopHUD />
             {state.mode !== "menu" ? <RightHUD /> : null}
 
-            {/* Screen routing */}
-            {state.mode === "menu" ? <MenuScreen /> : null}
-            {state.mode === "setup_weapon" ? <SetupWeaponScreen /> : null}
-            {state.mode === "setup_style" ? <SetupStyleScreen /> : null}
-            {state.mode === "setup_prologue" ? <SetupPrologueScreen /> : null}
-            {state.mode === "map" ? <MapScreen /> : null}
-            {state.mode === "location" ? <LocationScreen /> : null}
-            {state.mode === "combat" ? <CombatScreen /> : null}
-            {state.mode === "beacon" ? <BeaconScreen /> : null}
-            {state.mode === "dead" ? <DeadScreen /> : null}
+            {screen}
+
+            {/* Small event log */}
+            {state.mode !== "menu" ? <WhisperLog lines={state.run.log} /> : null}
+
+            {/* Transition overlay */}
+            {state.transition.open ? <TransitionOverlay /> : null}
 
             {/* Promotion Modal */}
             {state.ui.showPromotion ? <PromotionModal /> : null}
-
-            {/* Whisper Log (small, semi-transparent) */}
-            {state.mode !== "menu" ? <WhisperLog lines={state.run.log} /> : null}
 
             {/* Toast */}
             {state.ui.toast ? (
