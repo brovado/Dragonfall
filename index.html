@@ -15,21 +15,26 @@
     <!-- Babel so we can run JSX in-browser -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   </head>
+
   <body class="bg-zinc-950">
     <div id="root"></div>
 
     <script type="text/babel">
 const { useEffect, useMemo, useRef, useState } = React;
 
-// DRAGONFALL: MOUNTAIN EXILE — v0.2 (single-file)
-// - Node web travel (Knights of Pen & Paper vibe)
-// - XP-gated promotions (Element OR Cross-Training unlocked by battles)
-// - Class lattice viewer at start
-// - Save/Load via localStorage
-// - Screen flow: travel_map → node_intro → (combat or node_actions)
+/**
+ * DRAGONFALL: MOUNTAIN EXILE — v0.3
+ * Upgrades in this iteration:
+ * - Version bump visible on title/header
+ * - TRUE MAP travel: named locations + adjacency (not “node web”)
+ * - Enemies scale by area level
+ * - Safe locations (and built beacons) have NO monsters (rest is safe there)
+ * - Early game flow: Weapon -> Style -> travel/fights -> XP gate -> Promotion (Element OR Cross)
+ * - Loot now has meaning & value; extracted loot can be sold for gold
+ */
 
-const VERSION = "0.2.0";
-const SAVE_KEY = "dragonfall_save_v02";
+const VERSION = "0.3.0";
+const SAVE_KEY = "dragonfall_save_v03";
 
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 function uid() { return Math.random().toString(16).slice(2) + Date.now().toString(16); }
@@ -48,6 +53,8 @@ function rollDie(rng, sides) { return 1 + Math.floor(rng() * sides); }
 function fmtBonus(b) { if (b === 0) return "+0"; return b > 0 ? `+${b}` : `${b}`; }
 
 const DR = { easy: 10, standard: 13, hard: 16, extreme: 19 };
+
+// --- Builds -----------------------------------------------------------------
 
 const WEAPONS = [
   {
@@ -93,27 +100,136 @@ const ELEMENTS = [
   { key: "void", name: "Void", vibe: "Sacrifice • inversion" },
 ];
 
-// Enemies (preview)
-const ENEMIES = [
-  { key: "wyrmling", name: "Wyrmling Scout", hp: 8, dr: 12, attackDR: 12, dmg: [1, 3],
-    desc: "A juvenile dragonkin with a barbed spear and too much confidence." },
-  { key: "ashwolf", name: "Ash-Wolf", hp: 10, dr: 13, attackDR: 12, dmg: [2, 4],
-    desc: "Grey fur dusted in ember. It circles like a hungry thought." },
-  { key: "cultist", name: "Scalebound Cultist", hp: 9, dr: 12, attackDR: 13, dmg: [1, 4],
-    desc: "Eyes like candles. The air around them tastes of coin and smoke." },
+// --- Loot (meaning + value) -------------------------------------------------
+// Items are objects: { id, key, name, value, tags[], desc }
+const LOOT = [
+  { key: "iron_shards", name: "Iron Shards", value: 3, tags: ["metal","common"], desc: "Good for bracing plates and crude repairs." },
+  { key: "salt_rope", name: "Salt Rope", value: 4, tags: ["utility","common"], desc: "Cures meat, binds wounds, binds deals." },
+  { key: "old_sigil", name: "Old Sigil", value: 6, tags: ["arcane","uncommon"], desc: "A stamped charm. Warm when lies are spoken." },
+
+  { key: "relay_parts", name: "Relay Parts", value: 8, tags: ["beacon","uncommon"], desc: "Spare coils and crystal housings from the old beacons." },
+  { key: "beacon_ink", name: "Beacon Ink", value: 5, tags: ["arcane","common"], desc: "Black-blue. Refuses to dry in sunlight." },
+  { key: "ration_bar", name: "Ration Bar", value: 2, tags: ["food","common"], desc: "Dense. Bitter. Effective." },
+
+  { key: "scaled_fragment", name: "Scaled Fragment", value: 7, tags: ["wyrm","uncommon"], desc: "A scale sliver. Hard as sin." },
+  { key: "charcoal_resin", name: "Charcoal Resin", value: 6, tags: ["alchemy","uncommon"], desc: "Burns slow. Clings to steel." },
+  { key: "bright_glass", name: "Bright Glass", value: 9, tags: ["rare","arcane"], desc: "A shard that catches moonlight even at noon." },
+
+  { key: "ember_fang", name: "Ember Fang", value: 12, tags: ["trophy","wyrm","rare"], desc: "A trophy that buys respect—or trouble." },
+  { key: "ward_coil", name: "Ward Coil", value: 10, tags: ["beacon","rare"], desc: "A humming coil that stabilizes hostile air." },
+  { key: "void_chit", name: "Void Chit", value: 14, tags: ["void","rare"], desc: "A coin that feels heavier than it should." },
 ];
 
-const SITES = [
-  { key: "ashway_bridge", name: "Ashway Bridge",
+function mkLootItem(baseKey, seed) {
+  const base = LOOT.find(x => x.key === baseKey) || LOOT[0];
+  return { id: uid(), ...base, seed };
+}
+
+function sumLootValue(items) {
+  return (items || []).reduce((a, it) => a + (it?.value || 0), 0);
+}
+
+// --- Map (named locations + adjacency) --------------------------------------
+// kind: "safe" | "danger" | "station" | "event"
+const MAP_LOCATIONS = [
+  {
+    id: "beacon_gate",
+    name: "Beacon Gate",
+    kind: "safe",
+    level: 0,
+    region: "Ember March",
+    tone: "A basalt arch lit by ward-light. Survivors barter in whispers beneath the hum.",
+    lootTable: ["ration_bar","beacon_ink"],
+    coords: { x: 10, y: 55 },
+    links: ["ashway_bridge","ruined_relay"]
+  },
+  {
+    id: "ashway_bridge",
+    name: "Ashway Bridge",
+    kind: "danger",
+    level: 1,
+    region: "Ember March",
     tone: "Black water churns beneath a cracked span. Wind howls through broken stone ribs.",
-    loot: ["Iron Shards", "Salt Rope", "Old Sigil"] },
-  { key: "ruined_relay", name: "Ruined Beacon Relay",
+    lootTable: ["iron_shards","salt_rope","old_sigil"],
+    coords: { x: 28, y: 35 },
+    links: ["beacon_gate","ruined_relay","wyrm_path"]
+  },
+  {
+    id: "ruined_relay",
+    name: "Ruined Beacon Relay",
+    kind: "station",
+    level: 1,
+    region: "Ember March",
     tone: "A collapsed outpost with a dormant crystal core. Someone died here recently.",
-    loot: ["Relay Parts", "Beacon Ink", "Ration Bar"] },
-  { key: "wyrm_path", name: "Wyrm Path",
+    lootTable: ["relay_parts","beacon_ink","ration_bar"],
+    coords: { x: 30, y: 75 },
+    links: ["beacon_gate","ashway_bridge","wyrm_path","cinder_watch"]
+  },
+  {
+    id: "wyrm_path",
+    name: "Wyrm Path",
+    kind: "danger",
+    level: 2,
+    region: "Ember March",
     tone: "Claw marks score the rock. Heat breathes from the cracks like a sleeping furnace.",
-    loot: ["Scaled Fragment", "Charcoal Resin", "Bright Glass"] },
+    lootTable: ["scaled_fragment","charcoal_resin","bright_glass"],
+    coords: { x: 52, y: 55 },
+    links: ["ashway_bridge","ruined_relay","cinder_watch","shardfall_slope"]
+  },
+  {
+    id: "cinder_watch",
+    name: "Cinderwatch Overlook",
+    kind: "event",
+    level: 2,
+    region: "Ember March",
+    tone: "A lookout tower snapped in half. The horizon is a bruise—purple, blue, and smoke.",
+    lootTable: ["old_sigil","bright_glass","ward_coil"],
+    coords: { x: 52, y: 20 },
+    links: ["ruined_relay","wyrm_path"]
+  },
+  {
+    id: "shardfall_slope",
+    name: "Shardfall Slope",
+    kind: "danger",
+    level: 3,
+    region: "Upper Scree",
+    tone: "A slope of glassy rock. Every step threatens a singing collapse.",
+    lootTable: ["bright_glass","ember_fang","void_chit"],
+    coords: { x: 76, y: 55 },
+    links: ["wyrm_path"]
+  },
 ];
+
+// --- Enemies (scaled by area level) -----------------------------------------
+// (kept simple: each tier has a pool; we pick based on location.level)
+const ENEMY_POOLS = {
+  1: [
+    { key: "wyrmling", name: "Wyrmling Scout", hp: 8, dr: 12, attackDR: 12, dmg: [1, 3],
+      desc: "A juvenile dragonkin with a barbed spear and too much confidence." },
+    { key: "ashwolf", name: "Ash-Wolf", hp: 10, dr: 13, attackDR: 12, dmg: [2, 4],
+      desc: "Grey fur dusted in ember. It circles like a hungry thought." },
+  ],
+  2: [
+    { key: "cultist", name: "Scalebound Cultist", hp: 12, dr: 13, attackDR: 13, dmg: [2, 5],
+      desc: "Eyes like candles. The air around them tastes of coin and smoke." },
+    { key: "mire_drake", name: "Mire-Drake Strider", hp: 13, dr: 14, attackDR: 13, dmg: [2, 6],
+      desc: "A low-slung drake that moves like a crack in the ground." },
+  ],
+  3: [
+    { key: "ember_knight", name: "Ember Knight Remnant", hp: 16, dr: 15, attackDR: 14, dmg: [3, 7],
+      desc: "Armor fused to bone. It remembers an oath and hates you for breathing." },
+    { key: "voidling", name: "Voidling", hp: 15, dr: 15, attackDR: 15, dmg: [3, 8],
+      desc: "A shadow with teeth—more absence than body." },
+  ],
+};
+
+function pickEnemyForLevel(rng, lvl) {
+  const tier = clamp(lvl, 1, 3);
+  const pool = ENEMY_POOLS[tier] || ENEMY_POOLS[1];
+  return pool[Math.floor(rng() * pool.length)];
+}
+
+// --- Stats / Titles ----------------------------------------------------------
 
 function computeStats(base, weaponBias, styleKey, elementKey, crossKey) {
   const s = { ...base };
@@ -173,31 +289,6 @@ function titleFromBuild(weaponKey, styleKey, elementKey, crossStyle) {
   return `${weapon} ${style}`;
 }
 
-function pickSite(rng) { return SITES[Math.floor(rng() * SITES.length)]; }
-function pickEnemy(rng) { return ENEMIES[Math.floor(rng() * ENEMIES.length)]; }
-
-function createNodeWeb(rng) {
-  // Node web: small branching graph
-  const nodes = [];
-  const edges = [];
-  const types = ["fight", "fight", "fight", "event", "station", "event", "fight"];
-  const coords = [
-    { x: 12, y: 55 }, { x: 28, y: 35 }, { x: 28, y: 75 },
-    { x: 48, y: 25 }, { x: 50, y: 55 }, { x: 48, y: 85 }, { x: 74, y: 55 },
-  ];
-  for (let i = 0; i < coords.length; i++) {
-    nodes.push({ id: `n${i}`, ...coords[i], kind: types[i], revealed: i === 0, cleared: false, site: pickSite(rng) });
-  }
-  const links = [
-    ["n0","n1"], ["n0","n2"],
-    ["n1","n3"], ["n1","n4"],
-    ["n2","n4"], ["n2","n5"],
-    ["n3","n6"], ["n4","n6"], ["n5","n6"],
-  ];
-  for (const [a,b] of links) edges.push({ a, b });
-  return { nodes, edges };
-}
-
 function rollCheck(rng, label, statBonus, dr) {
   const d20 = rollDie(rng, 20);
   const total = d20 + statBonus;
@@ -255,9 +346,12 @@ function skillListForBuild(weaponKey, styleKey, elementKey, crossStyle) {
   return base;
 }
 
+// --- Game State --------------------------------------------------------------
+
 function mkNewGame(seed = Date.now()) {
   const gameId = uid();
   const rngSeed = (seed ^ gameId.length) >>> 0;
+
   return {
     version: VERSION,
     gameId,
@@ -265,6 +359,7 @@ function mkNewGame(seed = Date.now()) {
     phase: "start", // start | chooseStyle | play | dead
     book: { chapter: 1, page: 1 },
     meta: { echoes: 0, legacy: { startHP: 0, revealHints: 0 } },
+
     player: {
       name: "",
       weapon: null,
@@ -278,37 +373,40 @@ function mkNewGame(seed = Date.now()) {
       gold: 0,
       xp: 0,
       promoTier: 0,   // 0=weapon+style only, 1=affinity/cross unlocked
-      nextPromoAt: 4, // first promotion unlock threshold
-      inventory: [],
-      extracted: [],
-      stationBuilt: 0,
+      nextPromoAt: 4, // keep your original gating; fights give 2 XP → “a lil xp” before promo
+      inventory: [],  // carried loot items (objects)
+      extracted: [],  // extracted loot items (objects)
+      stationBuiltAt: {}, // { locationId: true }
       title: "Unbound",
     },
+
     run: {
       depth: 0,
       region: "Ember March",
-      nodeWeb: null,
-      currentNodeId: null,
-      site: null,
-      danger: null,
+      currentLocationId: "beacon_gate",
+      discovered: { beacon_gate: true }, // fog-of-war lite
+      cleared: {}, // { locationId: true } for danger places
       inCombat: false,
       enemy: null,
       enemyHP: 0,
       log: [],
     },
+
     ui: {
-      screen: "setup_weapon", // setup_weapon | setup_style | travel_map | node_intro | combat | node_actions | dead
       showClassTree: true,
       showPromotion: false,
-      selectedNode: null,
+      showClassReveal: false,
+      classRevealText: "",
     },
   };
 }
 
 function pushLog(state, entry) {
   const line = { id: uid(), t: Date.now(), ...entry };
-  state.run.log = [line, ...state.run.log].slice(0, 140);
+  state.run.log = [line, ...state.run.log].slice(0, 160);
 }
+
+// --- UI components -----------------------------------------------------------
 
 function Card({ title, subtitle, children, right }) {
   return (
@@ -346,6 +444,16 @@ function Button({ children, onClick, variant = "primary", disabled, title }) {
 }
 function Divider() { return <div className="h-px bg-white/10 my-3" />; }
 
+function kindBadge(kind, beaconHere) {
+  if (beaconHere) return { label: "SAFE • BEACON", cls: "bg-emerald-500/15 text-emerald-200 border-emerald-500/30" };
+  if (kind === "safe") return { label: "SAFE", cls: "bg-emerald-500/15 text-emerald-200 border-emerald-500/30" };
+  if (kind === "station") return { label: "RELAY", cls: "bg-sky-500/15 text-sky-200 border-sky-500/30" };
+  if (kind === "event") return { label: "EVENT", cls: "bg-indigo-500/15 text-indigo-200 border-indigo-500/30" };
+  return { label: "DANGER", cls: "bg-red-500/15 text-red-200 border-red-500/30" };
+}
+
+// --- Main -------------------------------------------------------------------
+
 function DragonfallMountainExilePreview() {
   const [state, setState] = useState(() => mkNewGame());
   const [toast, setToast] = useState(null);
@@ -362,6 +470,14 @@ function DragonfallMountainExilePreview() {
     () => skillListForBuild(state.player.weapon, state.player.style, state.player.element, state.player.crossStyle),
     [state.player.weapon, state.player.style, state.player.element, state.player.crossStyle]
   );
+
+  const loc = useMemo(
+    () => MAP_LOCATIONS.find(x => x.id === state.run.currentLocationId) || MAP_LOCATIONS[0],
+    [state.run.currentLocationId]
+  );
+
+  const beaconHere = !!state.player.stationBuiltAt?.[loc.id];
+  const safeHere = loc.kind === "safe" || beaconHere;
 
   const showToast = (msg) => {
     setToast(msg);
@@ -414,11 +530,15 @@ function DragonfallMountainExilePreview() {
   useEffect(() => {
     setState((prev) => {
       const draft = structuredClone(prev);
+      if (draft.run.log.length) return prev; // don’t spam on re-mount
       pushLog(draft, { type: "story", text: "Dragons rule the skies. Cities survive as beacons. The Mountain Expanse pays in blood and salvage." });
-      pushLog(draft, { type: "story", text: "Promotions require XP. Only extracted items endure." });
+      pushLog(draft, { type: "story", text: "Travel by named places. Only adjacent routes are possible." });
+      pushLog(draft, { type: "story", text: "Promotions require XP. Only extracted loot endures—and extracted loot can be sold at safe places." });
       return draft;
     });
   }, []);
+
+  // --- Early game flow: Weapon -> Style -> (play) ----------------------------
 
   const chooseWeapon = (weaponKey) => {
     setState((prev) => {
@@ -426,7 +546,6 @@ function DragonfallMountainExilePreview() {
       draft.player.weapon = weaponKey;
       recalcPlayer(draft);
       draft.phase = "chooseStyle";
-      draft.ui.screen = "setup_style";
       pushLog(draft, { type: "system", text: `Armament chosen: ${weaponKey.toUpperCase()}.` });
       return draft;
     });
@@ -439,21 +558,59 @@ function DragonfallMountainExilePreview() {
       recalcPlayer(draft);
 
       draft.phase = "play";
-      draft.ui.screen = "travel_map";
       draft.run.depth = 1;
-
-      const localRng = mulberry32(draft.rngSeed ^ 0xabc);
-      draft.run.nodeWeb = createNodeWeb(localRng);
-      draft.run.currentNodeId = "n0";
-      const startNode = draft.run.nodeWeb.nodes.find((n) => n.id === "n0");
-      draft.run.site = startNode?.site || pickSite(localRng);
-      draft.run.danger = "cleared"; // we are at start; travel decides danger
+      draft.run.currentLocationId = "beacon_gate";
+      draft.run.discovered = { beacon_gate: true };
+      draft.run.cleared = {};
+      draft.run.inCombat = false;
+      draft.run.enemy = null;
+      draft.run.enemyHP = 0;
 
       pushLog(draft, { type: "system", text: `Style chosen: ${styleKey.toUpperCase()}.` });
       pushLog(draft, { type: "story", text: "You are torn into light. Then—cold stone, thin air, and the smell of ash." });
-      pushLog(draft, { type: "story", text: `You arrive in the ${draft.run.region}. The map blooms like a wound.` });
+      pushLog(draft, { type: "story", text: "The Beacon Gate receives you without joy." });
       return draft;
     });
+  };
+
+  // --- Encounters / Combat ---------------------------------------------------
+
+  const startEncounterIfAllowed = (draft, location) => {
+    // No encounters in safe places or beacon-built places
+    const isBeacon = !!draft.player.stationBuiltAt?.[location.id];
+    const isSafe = location.kind === "safe" || isBeacon;
+
+    if (isSafe) {
+      draft.run.inCombat = false;
+      draft.run.enemy = null;
+      draft.run.enemyHP = 0;
+      return;
+    }
+
+    // Stations and events are “usually” safe unless you want later variants.
+    // For now: station/event do not auto-fight; danger does.
+    if (location.kind !== "danger") {
+      draft.run.inCombat = false;
+      draft.run.enemy = null;
+      draft.run.enemyHP = 0;
+      return;
+    }
+
+    // If already cleared, no fight on revisit (preview rule)
+    if (draft.run.cleared?.[location.id]) {
+      draft.run.inCombat = false;
+      draft.run.enemy = null;
+      draft.run.enemyHP = 0;
+      return;
+    }
+
+    const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ location.level ^ 0xBADA55);
+    const enemy = pickEnemyForLevel(localRng, location.level);
+
+    draft.run.inCombat = true;
+    draft.run.enemy = { ...enemy, areaLevel: location.level };
+    draft.run.enemyHP = enemy.hp + Math.floor(location.level / 2); // slight scaling
+    pushLog(draft, { type: "story", text: `⚔️ ${enemy.name} appears (${location.name}). ${enemy.desc}` });
   };
 
   const takeDamage = (draft, amount, reason) => {
@@ -461,8 +618,7 @@ function DragonfallMountainExilePreview() {
     pushLog(draft, { type: "system", text: `You take ${amount} damage (${reason}).` });
     if (draft.player.hp <= 0) {
       draft.phase = "dead";
-      draft.ui.screen = "dead";
-      const echoes = 2 + draft.run.depth + Math.floor(draft.player.gold / 3);
+      const echoes = 2 + draft.run.depth + Math.floor(draft.player.gold / 5);
       draft.meta.echoes += echoes;
       pushLog(draft, { type: "story", text: "☠️ You fall. The mountain keeps what you failed to extract." });
       pushLog(draft, { type: "system", text: `You gain ${echoes} Echoes at the Beacon.` });
@@ -482,7 +638,7 @@ function DragonfallMountainExilePreview() {
     pushLog(draft, { type: "roll", text: `${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "HIT" : "MISS"}` });
 
     if (check.success) {
-      let dmg = rollDamage(localRng, enemy.dmg[0], enemy.dmg[1]);
+      let dmg = rollDamage(localRng, enemy.dmg[0], enemy.dmg[1]) + Math.floor((enemy.areaLevel || 1) / 3);
       if (defendActive) dmg = Math.max(0, dmg - 1 - (draft.player.element === "earth" ? 1 : 0));
       takeDamage(draft, dmg, context);
     } else {
@@ -491,193 +647,39 @@ function DragonfallMountainExilePreview() {
     draft.run._defendActive = false;
   };
 
-  const endCombatWin = (draft) => {
-    const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0xbeef);
-    const lootPick = draft.run.site?.loot ? draft.run.site.loot[Math.floor(localRng() * draft.run.site.loot.length)] : "Scrap";
-    draft.player.inventory.push(lootPick);
-    draft.player.gold += 1 + Math.floor(localRng() * 3);
+  const dropLootFromLocation = (draft, location) => {
+    const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ location.level ^ 0xC0FFEE);
+    const table = location.lootTable?.length ? location.lootTable : ["iron_shards"];
+    const pick = table[Math.floor(localRng() * table.length)];
+    const item = mkLootItem(pick, `${location.id}:${draft.run.depth}`);
+    // slight value nudge by area level
+    item.value = item.value + Math.max(0, location.level - 1);
+    return item;
+  };
 
-    const xpGain = 2;
+  const endCombatWin = (draft) => {
+    const location = MAP_LOCATIONS.find(x => x.id === draft.run.currentLocationId) || MAP_LOCATIONS[0];
+    const loot = dropLootFromLocation(draft, location);
+
+    draft.player.inventory.push(loot);
+
+    const xpGain = 2; // keeps your original “a lil xp” cadence
     draft.player.xp += xpGain;
 
     draft.run.inCombat = false;
     draft.run.enemy = null;
     draft.run.enemyHP = 0;
-    draft.run.danger = "cleared";
 
-    const node = draft.run.nodeWeb?.nodes.find((n) => n.id === draft.run.currentNodeId);
-    if (node) node.cleared = true;
+    draft.run.cleared = draft.run.cleared || {};
+    draft.run.cleared[location.id] = true;
 
-    pushLog(draft, { type: "system", text: `Victory. Loot gained: ${lootPick}. +${xpGain} XP.` });
+    pushLog(draft, { type: "system", text: `Victory. Loot gained: ${loot.name} (value ${loot.value}). +${xpGain} XP.` });
 
+    // Promotion unlock
     if (draft.player.promoTier === 0 && draft.player.xp >= draft.player.nextPromoAt) {
       draft.ui.showPromotion = true;
       pushLog(draft, { type: "story", text: "Something in you shifts. A new discipline is ready to bind." });
     }
-
-    // Flow: after a win, you are at the node → actions screen
-    draft.ui.screen = "node_actions";
-  };
-
-  const choosePromotionElement = (elementKey) => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      draft.player.element = elementKey;
-      draft.player.crossStyle = null;
-      draft.player.promoTier = 1;
-      draft.ui.showPromotion = false;
-      recalcPlayer(draft);
-      pushLog(draft, { type: "system", text: `Promotion: Affinity ${elementKey.toUpperCase()}.` });
-      return draft;
-    });
-  };
-
-  const choosePromotionCross = (crossStyleKey) => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      draft.player.crossStyle = crossStyleKey;
-      draft.player.element = null;
-      draft.player.promoTier = 1;
-      draft.ui.showPromotion = false;
-      recalcPlayer(draft);
-      pushLog(draft, { type: "system", text: `Promotion: Cross-Training ${crossStyleKey.toUpperCase()}.` });
-      return draft;
-    });
-  };
-
-  const startCombatNow = (draft) => {
-    if (draft.run.inCombat) return;
-    const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0xdead);
-    const enemy = pickEnemy(localRng);
-    draft.run.inCombat = true;
-    draft.run.enemy = { ...enemy };
-    draft.run.enemyHP = enemy.hp;
-    draft.run.danger = "unknown";
-    pushLog(draft, { type: "story", text: `⚔️ ${enemy.name} appears. ${enemy.desc}` });
-  };
-
-  const continueFromNodeIntro = () => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.phase !== "play") return prev;
-
-      const node = draft.run.nodeWeb?.nodes.find((n) => n.id === draft.run.currentNodeId);
-      if (!node) { draft.ui.screen = "travel_map"; return draft; }
-
-      if (node.kind === "fight" && !node.cleared) {
-        draft.ui.screen = "combat";
-        startCombatNow(draft);
-        return draft;
-      }
-
-      draft.ui.screen = "node_actions";
-      return draft;
-    });
-  };
-
-  const goToMap = () => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.phase !== "play") return prev;
-      if (draft.run.inCombat) return prev;
-      draft.ui.screen = "travel_map";
-      return draft;
-    });
-  };
-
-  const moveToNode = (nodeId) => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      const web = draft.run.nodeWeb;
-      if (!web) return prev;
-      if (draft.run.inCombat) return prev;
-
-      const current = draft.run.currentNodeId;
-      if (current === nodeId) return prev;
-
-      const adjacent = web.edges.some((e) => (e.a === current && e.b === nodeId) || (e.b === current && e.a === nodeId));
-      if (!adjacent) { pushLog(draft, { type: "system", text: "You cannot reach that node from here." }); return draft; }
-
-      draft.run.currentNodeId = nodeId;
-      const node = web.nodes.find((n) => n.id === nodeId);
-      if (node) {
-        draft.run.site = node.site;
-        draft.run.depth += 1;
-
-        // reveal neighbors
-        for (const e of web.edges) {
-          if (e.a === nodeId) {
-            const nb = web.nodes.find((x) => x.id === e.b);
-            if (nb) nb.revealed = true;
-          }
-          if (e.b === nodeId) {
-            const nb = web.nodes.find((x) => x.id === e.a);
-            if (nb) nb.revealed = true;
-          }
-        }
-
-        draft.run.danger = node.kind === "fight" && !node.cleared ? "unknown" : "cleared";
-
-        // Flow: moving always goes to intro screen first
-        draft.ui.screen = "node_intro";
-
-        pushLog(draft, { type: "story", text: `You move to: ${node.site.name}.` });
-        pushLog(draft, { type: "story", text: node.site.tone });
-
-        if (node.kind === "station") pushLog(draft, { type: "system", text: "A dormant relay sits here. You may Extract." });
-      }
-      return draft;
-    });
-  };
-
-  const rest = () => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.phase !== "play" || draft.run.inCombat) return prev;
-
-      const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0x3333 ^ Date.now());
-      const heal = 2;
-      draft.player.hp = clamp(draft.player.hp + heal, 0, draft.player.hpMax);
-      pushLog(draft, { type: "system", text: `You rest (+${heal} HP).` });
-
-      // Light spice: resting can attract danger if you're on an uncleared fight node
-      const node = draft.run.nodeWeb?.nodes.find((n) => n.id === draft.run.currentNodeId);
-      if (node?.kind === "fight" && !node.cleared && localRng() < 0.45) {
-        pushLog(draft, { type: "story", text: "The quiet breaks. Something moves." });
-        draft.ui.screen = "combat";
-        startCombatNow(draft);
-      } else {
-        pushLog(draft, { type: "story", text: "The wind passes. No footsteps." });
-      }
-      return draft;
-    });
-  };
-
-  const buildStation = () => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.phase !== "play" || draft.run.inCombat) return prev;
-
-      const idx = draft.player.inventory.indexOf("Relay Parts");
-      if (idx === -1) { pushLog(draft, { type: "system", text: "You lack Relay Parts to build a Drop Station." }); return draft; }
-      draft.player.inventory.splice(idx, 1);
-      draft.player.stationBuilt += 1;
-      pushLog(draft, { type: "story", text: "You assemble a crude Drop Station. A faint ward flickers to life." });
-      pushLog(draft, { type: "system", text: "You can now Extract here." });
-      return draft;
-    });
-  };
-
-  const extract = () => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.phase !== "play" || draft.run.inCombat) return prev;
-
-      const items = draft.player.inventory.splice(0);
-      draft.player.extracted.push(...items);
-      pushLog(draft, { type: "system", text: `Extraction complete. Saved ${items.length} item(s).` });
-      return draft;
-    });
   };
 
   const combatAction = (key) => {
@@ -696,7 +698,7 @@ function DragonfallMountainExilePreview() {
         pushLog(draft, { type: "roll", text: `${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
 
         if (check.success) {
-          let dmg = rollDamage(localRng, dmgMin, dmgMax);
+          let dmg = rollDamage(localRng, dmgMin, dmgMax) + Math.floor((enemy.areaLevel || 1) / 3);
           if (check.d20 === 20) {
             dmg += 1;
             if (draft.player.element === "fire") dmg += 1;
@@ -757,6 +759,182 @@ function DragonfallMountainExilePreview() {
     });
   };
 
+  // --- Travel (adjacent named places) ---------------------------------------
+
+  const travelTo = (toId) => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      if (draft.phase !== "play") return prev;
+      if (draft.run.inCombat) { pushLog(draft, { type: "system", text: "You cannot travel during combat." }); return draft; }
+
+      const from = MAP_LOCATIONS.find(x => x.id === draft.run.currentLocationId) || MAP_LOCATIONS[0];
+      const to = MAP_LOCATIONS.find(x => x.id === toId);
+      if (!to) return prev;
+
+      const adjacent = (from.links || []).includes(toId) && (to.links || []).includes(from.id);
+      if (!adjacent) { pushLog(draft, { type: "system", text: "That route is not adjacent." }); return draft; }
+
+      draft.run.currentLocationId = toId;
+      draft.run.depth += 1;
+      draft.run.discovered[toId] = true;
+
+      pushLog(draft, { type: "story", text: `You travel to: ${to.name}.` });
+      pushLog(draft, { type: "story", text: to.tone });
+
+      // Station hint
+      if (to.kind === "station") {
+        pushLog(draft, { type: "system", text: "A dormant relay sits here. If you build a beacon, this place becomes safe." });
+      }
+
+      // Start encounter if allowed by rules
+      startEncounterIfAllowed(draft, to);
+
+      return draft;
+    });
+  };
+
+  // --- Rest / Build Beacon / Extract / Sell ---------------------------------
+
+  const rest = () => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      if (draft.phase !== "play") return prev;
+      if (draft.run.inCombat) { pushLog(draft, { type: "system", text: "No rest in combat." }); return draft; }
+
+      const here = MAP_LOCATIONS.find(x => x.id === draft.run.currentLocationId) || MAP_LOCATIONS[0];
+      const isBeacon = !!draft.player.stationBuiltAt?.[here.id];
+      const isSafe = here.kind === "safe" || isBeacon;
+
+      const heal = isSafe ? 3 : 2;
+      draft.player.hp = clamp(draft.player.hp + heal, 0, draft.player.hpMax);
+      pushLog(draft, { type: "system", text: `You rest (+${heal} HP).` });
+
+      if (isSafe) {
+        pushLog(draft, { type: "story", text: "No monsters here. The ward-light holds." });
+      } else {
+        // unsafe rest risk (preview)
+        const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ here.level ^ 0xAAAA ^ Date.now());
+        if (localRng() < 0.45 && here.kind === "danger" && !draft.run.cleared?.[here.id]) {
+          pushLog(draft, { type: "story", text: "You close your eyes. Something moves in the dark." });
+          startEncounterIfAllowed(draft, here);
+        } else {
+          pushLog(draft, { type: "story", text: "The wind passes. No footsteps." });
+        }
+      }
+      return draft;
+    });
+  };
+
+  const buildBeacon = () => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      if (draft.phase !== "play") return prev;
+      if (draft.run.inCombat) { pushLog(draft, { type: "system", text: "You cannot build during combat." }); return draft; }
+
+      const here = MAP_LOCATIONS.find(x => x.id === draft.run.currentLocationId) || MAP_LOCATIONS[0];
+
+      // Require Relay Parts in carried inventory
+      const idx = draft.player.inventory.findIndex(it => it.key === "relay_parts");
+      if (idx === -1) { pushLog(draft, { type: "system", text: "You lack Relay Parts to build a Beacon." }); return draft; }
+
+      draft.player.inventory.splice(idx, 1);
+      draft.player.stationBuiltAt = draft.player.stationBuiltAt || {};
+      draft.player.stationBuiltAt[here.id] = true;
+
+      // Once beacon exists, this location becomes safe (no more monsters here)
+      draft.run.inCombat = false;
+      draft.run.enemy = null;
+      draft.run.enemyHP = 0;
+
+      pushLog(draft, { type: "story", text: "You assemble a crude Beacon. A ward flickers to life… then steadies." });
+      pushLog(draft, { type: "system", text: "This place is now SAFE. You can rest and extract without monster risk." });
+      return draft;
+    });
+  };
+
+  const extract = () => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      if (draft.phase !== "play") return prev;
+      if (draft.run.inCombat) { pushLog(draft, { type: "system", text: "Extracting during combat is a good way to die." }); return draft; }
+
+      const here = MAP_LOCATIONS.find(x => x.id === draft.run.currentLocationId) || MAP_LOCATIONS[0];
+      const isBeacon = !!draft.player.stationBuiltAt?.[here.id];
+      const isSafe = here.kind === "safe" || isBeacon || here.kind === "station";
+
+      if (!isSafe) { pushLog(draft, { type: "system", text: "No secure station here. Build a Beacon or find a Relay/Safe place." }); return draft; }
+
+      const items = draft.player.inventory.splice(0);
+      draft.player.extracted.push(...items);
+
+      pushLog(draft, { type: "system", text: `Extraction complete. Saved ${items.length} item(s).` });
+      if (items.length) {
+        pushLog(draft, { type: "system", text: `Extracted value: ${sumLootValue(items)} (sellable at safe places).` });
+      }
+      return draft;
+    });
+  };
+
+  const sellExtracted = () => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      if (draft.phase !== "play") return prev;
+      if (draft.run.inCombat) return prev;
+
+      const here = MAP_LOCATIONS.find(x => x.id === draft.run.currentLocationId) || MAP_LOCATIONS[0];
+      const isBeacon = !!draft.player.stationBuiltAt?.[here.id];
+      const isSafe = here.kind === "safe" || isBeacon;
+
+      if (!isSafe) { pushLog(draft, { type: "system", text: "No market here. Sell only at SAFE places (or your Beacon)." }); return draft; }
+
+      const value = sumLootValue(draft.player.extracted);
+      if (value <= 0) { pushLog(draft, { type: "system", text: "Nothing extracted to sell." }); return draft; }
+
+      draft.player.gold += value;
+      draft.player.extracted = [];
+      pushLog(draft, { type: "system", text: `Sold extracted salvage for ${value} gold.` });
+      return draft;
+    });
+  };
+
+  // --- Promotion -------------------------------------------------------------
+
+  const revealClass = (draft) => {
+    draft.ui.showClassReveal = true;
+    draft.ui.classRevealText = `You are now known as: ${draft.player.title}.`;
+    pushLog(draft, { type: "story", text: `✦ ${draft.ui.classRevealText}` });
+  };
+
+  const choosePromotionElement = (elementKey) => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      draft.player.element = elementKey;
+      draft.player.crossStyle = null;
+      draft.player.promoTier = 1;
+      draft.ui.showPromotion = false;
+      recalcPlayer(draft);
+      pushLog(draft, { type: "system", text: `Promotion: Affinity ${elementKey.toUpperCase()}.` });
+      revealClass(draft);
+      return draft;
+    });
+  };
+
+  const choosePromotionCross = (crossStyleKey) => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      draft.player.crossStyle = crossStyleKey;
+      draft.player.element = null;
+      draft.player.promoTier = 1;
+      draft.ui.showPromotion = false;
+      recalcPlayer(draft);
+      pushLog(draft, { type: "system", text: `Promotion: Cross-Training ${crossStyleKey.toUpperCase()}.` });
+      revealClass(draft);
+      return draft;
+    });
+  };
+
+  // --- Death / Meta ----------------------------------------------------------
+
   const reviveToStart = () => {
     setState((prev) => {
       const draft = structuredClone(prev);
@@ -765,7 +943,6 @@ function DragonfallMountainExilePreview() {
       next.meta = draft.meta;
       next.player.hpMax = 10 + (next.meta.legacy.startHP || 0);
       next.player.hp = next.player.hpMax;
-      next.ui.screen = "setup_weapon";
       pushLog(next, { type: "system", text: "You wake at the Beacon. The mountain waits." });
       return next;
     });
@@ -782,33 +959,22 @@ function DragonfallMountainExilePreview() {
     });
   };
 
-  const currentNode = state.run.nodeWeb?.nodes.find((n) => n.id === state.run.currentNodeId);
-  const canExtractHere =
-    state.player.stationBuilt > 0 ||
-    state.run.site?.key === "ruined_relay" ||
-    currentNode?.kind === "station";
+  // --- Derived UI values -----------------------------------------------------
 
-  const reachable = (id) => {
-    const web = state.run.nodeWeb;
-    if (!web || !state.run.currentNodeId) return false;
-    const cur = state.run.currentNodeId;
-    return web.edges.some((e) => (e.a === cur && e.b === id) || (e.b === cur && e.a === id));
-  };
+  const adjacentLocations = useMemo(() => {
+    const from = MAP_LOCATIONS.find(x => x.id === state.run.currentLocationId) || MAP_LOCATIONS[0];
+    const ids = from.links || [];
+    return ids.map(id => MAP_LOCATIONS.find(x => x.id === id)).filter(Boolean);
+  }, [state.run.currentLocationId]);
 
-  const screenSubtitle =
-    state.phase === "dead"
-      ? "☠️ Fallen"
-      : state.phase !== "play"
-        ? "Preparation"
-        : state.ui.screen === "travel_map"
-          ? "Travel"
-          : state.ui.screen === "node_intro"
-            ? "Arrival"
-            : state.ui.screen === "combat"
-              ? "Combat"
-              : state.ui.screen === "node_actions"
-                ? "Actions"
-                : "In the Mountain";
+  const canExtractHere = useMemo(() => {
+    if (state.phase !== "play") return false;
+    const here = MAP_LOCATIONS.find(x => x.id === state.run.currentLocationId) || MAP_LOCATIONS[0];
+    const isBeacon = !!state.player.stationBuiltAt?.[here.id];
+    return here.kind === "safe" || here.kind === "station" || isBeacon;
+  }, [state.phase, state.run.currentLocationId, state.player.stationBuiltAt]);
+
+  // --- Render ----------------------------------------------------------------
 
   return (
     <div className="min-h-screen bg-[radial-gradient(80%_60%_at_50%_0%,rgba(124,58,237,0.28),rgba(0,0,0,0)),radial-gradient(70%_60%_at_20%_20%,rgba(14,165,233,0.18),rgba(0,0,0,0)),linear-gradient(to_bottom,rgba(0,0,0,1),rgba(9,9,11,1))] text-white">
@@ -817,7 +983,7 @@ function DragonfallMountainExilePreview() {
           <div>
             <div className="text-sm text-white/60">DRAGONFALL • Mountain Exile • v{VERSION}</div>
             <div className="text-3xl md:text-4xl font-semibold tracking-tight">Arcane Run Preview</div>
-            <div className="text-white/70 mt-1">node web • lethal dice • XP promotions • extract-only loot</div>
+            <div className="text-white/70 mt-1">map travel • adjacency routes • area-tier monsters • XP promotions • salvage economy</div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button onClick={saveGame} variant="ghost">Save</Button>
@@ -831,7 +997,7 @@ function DragonfallMountainExilePreview() {
           <div className="lg:col-span-8 flex flex-col gap-4">
             <Card
               title={`Chapter ${state.book.chapter} • Page ${state.book.page}`}
-              subtitle={screenSubtitle}
+              subtitle={state.phase === "dead" ? "☠️ Fallen" : state.phase === "play" ? "In the Mountain" : "Preparation"}
               right={
                 <div className="flex gap-2 flex-wrap justify-end">
                   <Pill>HP {state.player.hp}/{state.player.hpMax}</Pill>
@@ -845,7 +1011,7 @@ function DragonfallMountainExilePreview() {
                 <div className="space-y-3">
                   <div className="text-white/80 leading-relaxed">
                     Dragons own the sky. Cities endure as beacons. You will be cast into the Mountain Expanse.
-                    <span className="text-white font-semibold"> Promotions require XP.</span> Only extracted goods endure.
+                    <span className="text-white font-semibold"> Promotions require XP.</span> Only extracted salvage endures—and extracted salvage buys power.
                   </div>
 
                   {state.ui.showClassTree ? (
@@ -853,12 +1019,9 @@ function DragonfallMountainExilePreview() {
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <div className="font-semibold">Class Lattice (visual)</div>
-                          <div className="text-sm text-white/70">Weapon → Style → (Earn XP) → Element OR Cross → Titles</div>
+                          <div className="text-sm text-white/70">Weapon → Style → (Earn XP) → Element OR Cross → Title reveal</div>
                         </div>
-                        <Button
-                          variant="ghost"
-                          onClick={() => setState((p) => ({ ...p, ui: { ...p.ui, showClassTree: false } }))}
-                        >
+                        <Button variant="ghost" onClick={() => setState((p) => ({ ...p, ui: { ...p.ui, showClassTree: false } }))}>
                           Hide
                         </Button>
                       </div>
@@ -987,7 +1150,7 @@ function DragonfallMountainExilePreview() {
                           <Divider />
                           <div className="text-sm text-white/70">Depth reached: <span className="font-semibold text-white">{state.run.depth}</span></div>
                           <div className="text-sm text-white/70 mt-1">XP earned: <span className="font-semibold text-white">{state.player.xp}</span></div>
-                          <div className="text-sm text-white/70 mt-1">Extracted items: <span className="font-semibold text-white">{state.player.extracted.length}</span></div>
+                          <div className="text-sm text-white/70 mt-1">Gold: <span className="font-semibold text-white">{state.player.gold}</span></div>
                         </div>
 
                         <div className="rounded-2xl border border-white/10 p-4">
@@ -1002,221 +1165,186 @@ function DragonfallMountainExilePreview() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {/* Build ribbon is always visible */}
                   <div className="flex flex-wrap gap-2">
                     <Pill>Title: {state.player.title}</Pill>
                     <Pill>Weapon: {weaponObj?.name}</Pill>
                     <Pill>Style: {styleObj?.name}</Pill>
                     {elementObj ? <Pill>Affinity: {elementObj.name}</Pill> : null}
                     {state.player.crossStyle ? <Pill>Cross: {WEAPONS.flatMap(w => w.styles).find(s => s.key === state.player.crossStyle)?.name}</Pill> : null}
-                    <Pill>Depth: {state.run.depth}</Pill>
+                    <Pill>Region: {loc.region}</Pill>
                     <Pill>Promo: {state.player.promoTier}/?</Pill>
                   </div>
 
-                  {/* Screen flow */}
-                  {state.ui.screen === "travel_map" ? (
-                    <div className="rounded-2xl border border-white/10 p-4 bg-white/5">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-lg font-semibold">Map</div>
-                          <div className="text-sm text-white/70 mt-1">Choose a reachable node. Only the path ahead matters.</div>
-                        </div>
-                        <div className="text-xs text-white/60 pt-1">
-                          {state.player.promoTier === 0 ? (
-                            <>Earn <span className="text-white font-semibold">{Math.max(0, state.player.nextPromoAt - state.player.xp)}</span> XP for Promotion.</>
-                          ) : <>Promotion unlocked.</>}
-                        </div>
+                  <div className="rounded-2xl border border-white/10 p-4 bg-white/5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-lg font-semibold">{loc.name}</div>
+                        <div className="text-sm text-white/70 mt-1">{loc.tone}</div>
                       </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <span className={`rounded-full px-2 py-1 text-xs border ${kindBadge(loc.kind, beaconHere).cls}`}>
+                          {kindBadge(loc.kind, beaconHere).label} • LV {loc.level}
+                        </span>
+                        {state.run.cleared?.[loc.id] && loc.kind === "danger" ? (
+                          <span className="text-xs text-white/60">Cleared</span>
+                        ) : null}
+                      </div>
+                    </div>
 
+                    {state.run.inCombat && state.run.enemy ? (
+                      <div className="mt-3 flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold">⚔️ {state.run.enemy.name}</div>
+                          <div className="text-xs text-white/60">Enemy DR {state.run.enemy.dr} • Attack DR {state.run.enemy.attackDR} • Area LV {state.run.enemy.areaLevel}</div>
+                        </div>
+                        <div className="text-lg font-semibold">HP {state.run.enemyHP}/{state.run.enemy.hp + Math.floor((state.run.enemy.areaLevel||1)/2)}</div>
+                      </div>
+                    ) : (
+                      <div className="mt-3 text-sm text-white/60">
+                        {safeHere ? "Safe air. No monsters here." : loc.kind === "danger" ? "Danger territory. If it’s not cleared, it bites." : "Quiet ground. For now."}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-2xl border border-white/10 p-4">
+                      <div className="font-semibold">World Map</div>
+                      <div className="text-xs text-white/60 mt-1">Travel only to adjacent named places.</div>
                       <Divider />
 
                       <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                        <svg viewBox="0 0 100 100" className="w-full h-48">
-                          {state.run.nodeWeb?.edges.map((e, i) => {
-                            const a = state.run.nodeWeb.nodes.find((n) => n.id === e.a);
-                            const b = state.run.nodeWeb.nodes.find((n) => n.id === e.b);
-                            if (!a || !b) return null;
-                            const isNear = e.a === state.run.currentNodeId || e.b === state.run.currentNodeId;
+                        <svg viewBox="0 0 100 100" className="w-full h-44">
+                          {/* links */}
+                          {MAP_LOCATIONS.flatMap((a) => (a.links || []).map((bId) => {
+                            const b = MAP_LOCATIONS.find(x => x.id === bId);
+                            if (!b) return null;
+                            // draw each edge once
+                            if (a.id > b.id) return null;
+                            const near = a.id === state.run.currentLocationId || b.id === state.run.currentLocationId;
+                            const aSeen = state.run.discovered?.[a.id];
+                            const bSeen = state.run.discovered?.[b.id];
+                            const fade = aSeen && bSeen ? 1 : 0.25;
                             return (
                               <line
-                                key={i}
-                                x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                                stroke={isNear ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)"}
+                                key={`${a.id}-${b.id}`}
+                                x1={a.coords.x} y1={a.coords.y}
+                                x2={b.coords.x} y2={b.coords.y}
+                                stroke={near ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)"}
                                 strokeWidth={1.5}
+                                opacity={fade}
                               />
                             );
-                          })}
+                          }))}
 
-                          {state.run.nodeWeb?.nodes.map((n) => {
-                            const isHere = n.id === state.run.currentNodeId;
-                            const isReach = n.revealed && reachable(n.id) && !isHere && !state.run.inCombat;
-                            const fill = n.kind === "fight" ? "rgba(239,68,68,0.22)"
-                              : n.kind === "station" ? "rgba(34,197,94,0.18)"
-                              : "rgba(59,130,246,0.16)";
-                            const stroke = isHere ? "rgba(255,255,255,0.65)" : n.revealed ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.10)";
-                            const opacity = n.revealed ? 1 : 0.25;
+                          {/* nodes */}
+                          {MAP_LOCATIONS.map((n) => {
+                            const seen = !!state.run.discovered?.[n.id];
+                            const isHere = n.id === state.run.currentLocationId;
+                            const isBeacon = !!state.player.stationBuiltAt?.[n.id];
+                            const fill =
+                              isBeacon || n.kind === "safe" ? "rgba(34,197,94,0.18)"
+                              : n.kind === "station" ? "rgba(14,165,233,0.16)"
+                              : n.kind === "event" ? "rgba(99,102,241,0.16)"
+                              : "rgba(239,68,68,0.20)";
+                            const stroke = isHere ? "rgba(255,255,255,0.70)" : seen ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.10)";
+                            const opacity = seen ? 1 : 0.25;
 
                             return (
-                              <g
-                                key={n.id}
-                                opacity={opacity}
-                                style={{ cursor: isReach ? "pointer" : "default" }}
-                                onClick={() => {
-                                  if (!isReach) return;
-                                  moveToNode(n.id);
-                                }}
-                              >
-                                <circle cx={n.x} cy={n.y} r={6.5} fill={fill} stroke={stroke} strokeWidth={2} />
-                                {isHere ? <circle cx={n.x} cy={n.y} r={10} fill="none" stroke="rgba(124,58,237,0.6)" strokeWidth={1.5} /> : null}
+                              <g key={n.id} opacity={opacity}>
+                                <circle cx={n.coords.x} cy={n.coords.y} r={6.5} fill={fill} stroke={stroke} strokeWidth={2} />
+                                {isHere ? <circle cx={n.coords.x} cy={n.coords.y} r={10} fill="none" stroke="rgba(124,58,237,0.6)" strokeWidth={1.5} /> : null}
                               </g>
                             );
                           })}
                         </svg>
 
-                        <div className="flex flex-wrap gap-2 mt-2">
-                          {state.run.nodeWeb?.nodes
-                            .filter((n) => n.revealed && reachable(n.id))
-                            .map((n) => {
-                              const isHere = n.id === state.run.currentNodeId;
-                              const labelIcon = n.kind === "fight" ? "⚔" : n.kind === "station" ? "⬡" : "✦";
+                        <div className="mt-2">
+                          <div className="text-xs text-white/60">Adjacent routes from <span className="text-white font-semibold">{loc.name}</span>:</div>
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {adjacentLocations.map((n) => {
+                              const isHere = n.id === state.run.currentLocationId;
+                              const seen = !!state.run.discovered?.[n.id];
+                              const isBeacon = !!state.player.stationBuiltAt?.[n.id];
+                              const badge = kindBadge(n.kind, isBeacon);
                               return (
                                 <Button
                                   key={n.id}
                                   variant={isHere ? "primary" : "ghost"}
-                                  onClick={() => {
-                                    if (isHere || state.run.inCombat) return;
-                                    moveToNode(n.id);
-                                  }}
+                                  onClick={() => travelTo(n.id)}
                                   disabled={isHere || state.run.inCombat}
-                                  title={n.site.name}
+                                  title={n.tone}
                                 >
-                                  {labelIcon} {n.site.name}
+                                  {seen ? "→" : "✦"} {n.name}
                                 </Button>
                               );
                             })}
-                        </div>
-
-                        <div className="text-xs text-white/50 mt-2">
-                          Tip: circles are clickable. Only reachable nodes appear below.
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {state.ui.screen === "node_intro" ? (
-                    <div className="rounded-2xl border border-white/10 p-4 bg-white/5">
-                      <div className="text-sm text-white/60">Arrival</div>
-                      <div className="text-2xl font-semibold mt-1">{state.run.site?.name}</div>
-                      <div className="text-sm text-white/70 mt-2 leading-relaxed">{state.run.site?.tone}</div>
-
-                      <Divider />
-
-                      <div className="flex flex-wrap gap-2">
-                        <Button onClick={continueFromNodeIntro}>
-                          Continue
-                        </Button>
-                        <Button variant="ghost" onClick={goToMap} disabled={state.run.inCombat}>
-                          Back to Map
-                        </Button>
-                      </div>
-
-                      <div className="text-xs text-white/60 mt-3">
-                        {currentNode?.kind === "fight" && !currentNode?.cleared
-                          ? "You sense a threat here."
-                          : currentNode?.kind === "station"
-                            ? "A relay sleeps here. Extraction is possible."
-                            : "Quiet… for now."}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {state.ui.screen === "combat" ? (
-                    <div className="rounded-2xl border border-white/10 p-4 bg-white/5 space-y-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-sm text-white/60">Combat</div>
-                          <div className="text-xl font-semibold mt-1">⚔️ {state.run.enemy?.name}</div>
-                          <div className="text-xs text-white/60 mt-1">
-                            Enemy DR {state.run.enemy?.dr} • Attack DR {state.run.enemy?.attackDR}
                           </div>
                         </div>
-                        <div className="text-lg font-semibold">
-                          HP {state.run.enemyHP}/{state.run.enemy?.hp}
-                        </div>
                       </div>
 
                       <Divider />
-
-                      <div className="flex flex-wrap gap-2">
-                        <Button onClick={() => combatAction("attack")}>Attack</Button>
-                        <Button variant="ghost" onClick={() => combatAction("defend")}>Brace</Button>
-                        <Button variant="ghost" onClick={() => combatAction("maneuver")}>Maneuver</Button>
-                        {skills
-                          .filter((s) => s.kind === "action" && !["attack","defend","maneuver"].includes(s.key))
-                          .map((s) => (
-                            <Button key={s.key} variant="ghost" onClick={() => combatAction(s.key)}>
-                              {s.name}
-                            </Button>
-                          ))}
-                      </div>
-
-                      <div className="text-xs text-white/60">
-                        (When you win, you’ll land in <span className="text-white font-semibold">Node Actions</span>.)
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {state.ui.screen === "node_actions" ? (
-                    <div className="rounded-2xl border border-white/10 p-4 bg-white/5 space-y-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-sm text-white/60">At Location</div>
-                          <div className="text-xl font-semibold mt-1">{state.run.site?.name}</div>
-                          <div className="text-xs text-white/60 mt-1">
-                            {currentNode?.kind === "station" ? "⬡ Station Node" : currentNode?.kind === "fight" ? "⚔ Fight Node" : "✦ Event Node"}
-                            {currentNode?.cleared ? " • Cleared" : ""}
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button variant="ghost" onClick={goToMap} disabled={state.run.inCombat}>Return to Map</Button>
-                        </div>
-                      </div>
-
-                      <Divider />
-
                       <div className="flex flex-wrap gap-2">
                         <Button variant="ghost" onClick={rest} disabled={state.run.inCombat}>Rest</Button>
                         <Button
                           variant="ghost"
-                          onClick={buildStation}
-                          disabled={state.run.inCombat}
-                          title="Requires Relay Parts"
+                          onClick={buildBeacon}
+                          disabled={state.run.inCombat || beaconHere}
+                          title="Requires Relay Parts (carried). Makes this place safe."
                         >
-                          Build Drop Station
+                          {beaconHere ? "Beacon Built" : "Build Beacon"}
                         </Button>
                         <Button
                           variant="ghost"
                           onClick={extract}
                           disabled={!canExtractHere || state.run.inCombat}
-                          title={canExtractHere ? "Save carried items." : "No station here."}
+                          title={canExtractHere ? "Move carried loot into extracted stash." : "Need safe/relay/beacon to extract."}
                         >
                           Extract
                         </Button>
-
-                        {currentNode?.kind === "fight" && !currentNode?.cleared ? (
-                          <Button onClick={() => { setState(p => ({ ...p, ui: { ...p.ui, screen: "combat" } })); setTimeout(() => { /* no-op */ }, 0); }}>
-                            Enter Combat
-                          </Button>
-                        ) : null}
-                      </div>
-
-                      <div className="text-sm text-white/70 leading-relaxed">
-                        {canExtractHere
-                          ? "Extraction is available here."
-                          : "No extraction point here. You’ll need a station node or a built Drop Station."}
+                        <Button
+                          variant="ghost"
+                          onClick={sellExtracted}
+                          disabled={state.run.inCombat}
+                          title="Sell extracted salvage for gold (safe places only)."
+                        >
+                          Sell Extracted
+                        </Button>
                       </div>
                     </div>
-                  ) : null}
+
+                    <div className="rounded-2xl border border-white/10 p-4">
+                      <div className="font-semibold">Actions</div>
+                      <div className="text-xs text-white/60 mt-1">Dice decide. Failure hurts.</div>
+                      <Divider />
+
+                      {state.run.inCombat ? (
+                        <div className="flex flex-wrap gap-2">
+                          <Button onClick={() => combatAction("attack")}>Attack</Button>
+                          <Button variant="ghost" onClick={() => combatAction("defend")}>Brace</Button>
+                          <Button variant="ghost" onClick={() => combatAction("maneuver")}>Maneuver</Button>
+                          {skills
+                            .filter((s) => s.kind === "action" && !["attack","defend","maneuver"].includes(s.key))
+                            .map((s) => (
+                              <Button key={s.key} variant="ghost" onClick={() => combatAction(s.key)}>
+                                {s.name}
+                              </Button>
+                            ))}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-white/70">
+                          Travel via adjacent routes.
+                          {state.player.promoTier === 0 ? (
+                            <div className="mt-2 text-xs text-white/60">
+                              Earn <span className="text-white font-semibold">{Math.max(0, state.player.nextPromoAt - state.player.xp)}</span> more XP to unlock your first specialization.
+                            </div>
+                          ) : null}
+                          {safeHere ? (
+                            <div className="mt-2 text-xs text-white/60">This place is safe. Resting will never trigger monsters.</div>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
             </Card>
@@ -1244,12 +1372,15 @@ function DragonfallMountainExilePreview() {
           </div>
 
           <div className="lg:col-span-4 flex flex-col gap-4">
-            <Card title="Character" subtitle="Stats, skills, inventory">
+            <Card title="Character" subtitle="Stats, skills, salvage economy">
               <div className="flex flex-wrap gap-2">
                 <Pill>HP {state.player.hp}/{state.player.hpMax}</Pill>
                 <Pill>XP {state.player.xp}</Pill>
                 <Pill>Gold {state.player.gold}</Pill>
+                <Pill>Carry Value {sumLootValue(state.player.inventory)}</Pill>
+                <Pill>Extracted Value {sumLootValue(state.player.extracted)}</Pill>
               </div>
+
               <Divider />
               <div className="grid grid-cols-2 gap-3">
                 {["might","finesse","wits","will"].map((k) => (
@@ -1278,8 +1409,18 @@ function DragonfallMountainExilePreview() {
               <div className="text-sm font-semibold">Inventory (carried)</div>
               <div className="text-sm text-white/70 mt-2">
                 {state.player.inventory.length ? (
-                  <ul className="list-disc pl-5 space-y-1">
-                    {state.player.inventory.map((it, i) => <li key={`${it}-${i}`}>{it}</li>)}
+                  <ul className="space-y-2">
+                    {state.player.inventory.map((it) => (
+                      <li key={it.id} className="rounded-xl border border-white/10 p-3 bg-white/5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="font-medium">{it.name}</div>
+                            <div className="text-xs text-white/60 mt-1">{it.desc}</div>
+                          </div>
+                          <Pill>Value {it.value}</Pill>
+                        </div>
+                      </li>
+                    ))}
                   </ul>
                 ) : <div className="text-white/50">Empty.</div>}
               </div>
@@ -1288,20 +1429,30 @@ function DragonfallMountainExilePreview() {
               <div className="text-sm font-semibold">Extracted (saved)</div>
               <div className="text-sm text-white/70 mt-2">
                 {state.player.extracted.length ? (
-                  <ul className="list-disc pl-5 space-y-1">
-                    {state.player.extracted.map((it, i) => <li key={`${it}-${i}`}>{it}</li>)}
+                  <ul className="space-y-2">
+                    {state.player.extracted.map((it) => (
+                      <li key={it.id} className="rounded-xl border border-white/10 p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="font-medium">{it.name}</div>
+                            <div className="text-xs text-white/60 mt-1">{it.desc}</div>
+                          </div>
+                          <Pill>Value {it.value}</Pill>
+                        </div>
+                      </li>
+                    ))}
                   </ul>
                 ) : <div className="text-white/50">None yet.</div>}
               </div>
             </Card>
 
-            <Card title="Help" subtitle="How this preview works">
+            <Card title="Help" subtitle="What changed in v0.3">
               <div className="text-sm text-white/70 leading-relaxed space-y-2">
-                <div><span className="font-semibold text-white">Flow:</span> Map → Arrival → Combat/Actions.</div>
-                <div><span className="font-semibold text-white">Map:</span> only reachable nodes are selectable.</div>
-                <div><span className="font-semibold text-white">Fights:</span> give loot + XP.</div>
-                <div><span className="font-semibold text-white">Promotion:</span> at 4 XP, choose <span className="font-semibold text-white">Element OR Cross</span>.</div>
-                <div><span className="font-semibold text-white">Extraction:</span> only extracted loot is permanent.</div>
+                <div><span className="font-semibold text-white">Map travel:</span> you move between <span className="font-semibold text-white">named locations</span> using adjacent routes.</div>
+                <div><span className="font-semibold text-white">Area monsters:</span> danger locations spawn enemies based on area level.</div>
+                <div><span className="font-semibold text-white">Safe rests:</span> safe places (and built beacons) have <span className="font-semibold text-white">no monsters</span>.</div>
+                <div><span className="font-semibold text-white">Loot value:</span> salvage has meaning + value. Extract it, then sell it in safe places.</div>
+                <div><span className="font-semibold text-white">Specialization:</span> at {state.player.nextPromoAt} XP choose <span className="font-semibold text-white">Element OR Cross</span>, then you get a class-title reveal.</div>
               </div>
             </Card>
           </div>
@@ -1314,8 +1465,8 @@ function DragonfallMountainExilePreview() {
           <div className="max-w-2xl w-full rounded-2xl border border-white/10 bg-zinc-950/80 backdrop-blur p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-xl font-semibold">Promotion Unlocked</div>
-                <div className="text-sm text-white/70 mt-1">Choose one: bind an Element, or cross-train a Style.</div>
+                <div className="text-xl font-semibold">Specialization Unlocked</div>
+                <div className="text-sm text-white/70 mt-1">Choose one: bind an Element, or cross-train a Style. Then you’ll receive your class title.</div>
               </div>
               <Button variant="ghost" onClick={() => setState((p) => ({ ...p, ui: { ...p.ui, showPromotion: false } }))}>
                 Later
@@ -1350,6 +1501,24 @@ function DragonfallMountainExilePreview() {
                 </div>
                 <div className="text-xs text-white/50 mt-2">(Preview: curated list for now.)</div>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Class Reveal Modal */}
+      {state.phase === "play" && state.ui.showClassReveal ? (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4">
+          <div className="max-w-xl w-full rounded-2xl border border-white/10 bg-zinc-950/80 backdrop-blur p-4">
+            <div className="text-xl font-semibold">Name Claimed</div>
+            <div className="text-sm text-white/70 mt-2">
+              {state.ui.classRevealText || `You are now known as: ${state.player.title}.`}
+            </div>
+            <Divider />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setState(p => ({ ...p, ui: { ...p.ui, showClassReveal: false } }))}>
+                Continue
+              </Button>
             </div>
           </div>
         </div>
