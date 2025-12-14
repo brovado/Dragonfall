@@ -19,7 +19,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-import React, { useEffect, useMemo, useRef, useState } from "react";
+const { useEffect, useMemo, useRef, useState } = React;
 
 // DRAGONFALL: MOUNTAIN EXILE — v0.2 (single-file)
 // - Node web travel (Knights of Pen & Paper vibe)
@@ -344,7 +344,7 @@ function Button({ children, onClick, variant = "primary", disabled, title }) {
 }
 function Divider() { return <div className="h-px bg-white/10 my-3" />; }
 
-export default function DragonfallMountainExilePreview() {
+function DragonfallMountainExilePreview() {
   const [state, setState] = useState(() => mkNewGame());
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -1197,9 +1197,11 @@ export default function DragonfallMountainExilePreview() {
 }
 
 
-      ReactDOM.createRoot(document.getElementById("root")).render(
-        React.createElement(DragonfallMountainExilePreview)
-      );
+ReactDOM.render(
+  React.createElement(DragonfallMountainExilePreview),
+  document.getElementById("root")
+);
+
     </script>
   </body>
 </html>
