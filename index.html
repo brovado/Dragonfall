@@ -26,6 +26,7 @@ const { useEffect, useMemo, useRef, useState } = React;
 // - XP-gated promotions (Element OR Cross-Training unlocked by battles)
 // - Class lattice viewer at start
 // - Save/Load via localStorage
+// - Screen flow: travel_map → node_intro → (combat or node_actions)
 
 const VERSION = "0.2.0";
 const SAVE_KEY = "dragonfall_save_v02";
@@ -296,6 +297,7 @@ function mkNewGame(seed = Date.now()) {
       log: [],
     },
     ui: {
+      screen: "setup_weapon", // setup_weapon | setup_style | travel_map | node_intro | combat | node_actions | dead
       showClassTree: true,
       showPromotion: false,
       selectedNode: null,
@@ -424,6 +426,7 @@ function DragonfallMountainExilePreview() {
       draft.player.weapon = weaponKey;
       recalcPlayer(draft);
       draft.phase = "chooseStyle";
+      draft.ui.screen = "setup_style";
       pushLog(draft, { type: "system", text: `Armament chosen: ${weaponKey.toUpperCase()}.` });
       return draft;
     });
@@ -435,8 +438,8 @@ function DragonfallMountainExilePreview() {
       draft.player.style = styleKey;
       recalcPlayer(draft);
 
-      // Start run: no element/cross yet. Earn it via XP.
       draft.phase = "play";
+      draft.ui.screen = "travel_map";
       draft.run.depth = 1;
 
       const localRng = mulberry32(draft.rngSeed ^ 0xabc);
@@ -444,25 +447,11 @@ function DragonfallMountainExilePreview() {
       draft.run.currentNodeId = "n0";
       const startNode = draft.run.nodeWeb.nodes.find((n) => n.id === "n0");
       draft.run.site = startNode?.site || pickSite(localRng);
-      draft.run.danger = "unknown";
+      draft.run.danger = "cleared"; // we are at start; travel decides danger
 
       pushLog(draft, { type: "system", text: `Style chosen: ${styleKey.toUpperCase()}.` });
       pushLog(draft, { type: "story", text: "You are torn into light. Then—cold stone, thin air, and the smell of ash." });
       pushLog(draft, { type: "story", text: `You arrive in the ${draft.run.region}. The map blooms like a wound.` });
-      return draft;
-    });
-  };
-
-  const ensureEncounter = () => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.run.inCombat) return prev;
-      const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0xdead);
-      const enemy = pickEnemy(localRng);
-      draft.run.inCombat = true;
-      draft.run.enemy = { ...enemy };
-      draft.run.enemyHP = enemy.hp;
-      pushLog(draft, { type: "story", text: `⚔️ ${enemy.name} appears. ${enemy.desc}` });
       return draft;
     });
   };
@@ -472,6 +461,7 @@ function DragonfallMountainExilePreview() {
     pushLog(draft, { type: "system", text: `You take ${amount} damage (${reason}).` });
     if (draft.player.hp <= 0) {
       draft.phase = "dead";
+      draft.ui.screen = "dead";
       const echoes = 2 + draft.run.depth + Math.floor(draft.player.gold / 3);
       draft.meta.echoes += echoes;
       pushLog(draft, { type: "story", text: "☠️ You fall. The mountain keeps what you failed to extract." });
@@ -515,17 +505,18 @@ function DragonfallMountainExilePreview() {
     draft.run.enemyHP = 0;
     draft.run.danger = "cleared";
 
-    // mark node cleared
     const node = draft.run.nodeWeb?.nodes.find((n) => n.id === draft.run.currentNodeId);
     if (node) node.cleared = true;
 
     pushLog(draft, { type: "system", text: `Victory. Loot gained: ${lootPick}. +${xpGain} XP.` });
 
-    // Promotion unlock
     if (draft.player.promoTier === 0 && draft.player.xp >= draft.player.nextPromoAt) {
       draft.ui.showPromotion = true;
       pushLog(draft, { type: "story", text: "Something in you shifts. A new discipline is ready to bind." });
     }
+
+    // Flow: after a win, you are at the node → actions screen
+    draft.ui.screen = "node_actions";
   };
 
   const choosePromotionElement = (elementKey) => {
@@ -554,11 +545,52 @@ function DragonfallMountainExilePreview() {
     });
   };
 
+  const startCombatNow = (draft) => {
+    if (draft.run.inCombat) return;
+    const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0xdead);
+    const enemy = pickEnemy(localRng);
+    draft.run.inCombat = true;
+    draft.run.enemy = { ...enemy };
+    draft.run.enemyHP = enemy.hp;
+    draft.run.danger = "unknown";
+    pushLog(draft, { type: "story", text: `⚔️ ${enemy.name} appears. ${enemy.desc}` });
+  };
+
+  const continueFromNodeIntro = () => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      if (draft.phase !== "play") return prev;
+
+      const node = draft.run.nodeWeb?.nodes.find((n) => n.id === draft.run.currentNodeId);
+      if (!node) { draft.ui.screen = "travel_map"; return draft; }
+
+      if (node.kind === "fight" && !node.cleared) {
+        draft.ui.screen = "combat";
+        startCombatNow(draft);
+        return draft;
+      }
+
+      draft.ui.screen = "node_actions";
+      return draft;
+    });
+  };
+
+  const goToMap = () => {
+    setState((prev) => {
+      const draft = structuredClone(prev);
+      if (draft.phase !== "play") return prev;
+      if (draft.run.inCombat) return prev;
+      draft.ui.screen = "travel_map";
+      return draft;
+    });
+  };
+
   const moveToNode = (nodeId) => {
     setState((prev) => {
       const draft = structuredClone(prev);
       const web = draft.run.nodeWeb;
       if (!web) return prev;
+      if (draft.run.inCombat) return prev;
 
       const current = draft.run.currentNodeId;
       if (current === nodeId) return prev;
@@ -574,11 +606,21 @@ function DragonfallMountainExilePreview() {
 
         // reveal neighbors
         for (const e of web.edges) {
-          if (e.a === nodeId) web.nodes.find((x) => x.id === e.b) && (web.nodes.find((x) => x.id === e.b).revealed = true);
-          if (e.b === nodeId) web.nodes.find((x) => x.id === e.a) && (web.nodes.find((x) => x.id === e.a).revealed = true);
+          if (e.a === nodeId) {
+            const nb = web.nodes.find((x) => x.id === e.b);
+            if (nb) nb.revealed = true;
+          }
+          if (e.b === nodeId) {
+            const nb = web.nodes.find((x) => x.id === e.a);
+            if (nb) nb.revealed = true;
+          }
         }
 
-        draft.run.danger = node.kind === "fight" ? "unknown" : "cleared";
+        draft.run.danger = node.kind === "fight" && !node.cleared ? "unknown" : "cleared";
+
+        // Flow: moving always goes to intro screen first
+        draft.ui.screen = "node_intro";
+
         pushLog(draft, { type: "story", text: `You move to: ${node.site.name}.` });
         pushLog(draft, { type: "story", text: node.site.tone });
 
@@ -591,11 +633,22 @@ function DragonfallMountainExilePreview() {
   const rest = () => {
     setState((prev) => {
       const draft = structuredClone(prev);
+      if (draft.phase !== "play" || draft.run.inCombat) return prev;
+
       const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0x3333 ^ Date.now());
       const heal = 2;
       draft.player.hp = clamp(draft.player.hp + heal, 0, draft.player.hpMax);
       pushLog(draft, { type: "system", text: `You rest (+${heal} HP).` });
-      if (localRng() < 0.5) ensureEncounter(); else pushLog(draft, { type: "story", text: "The wind passes. No footsteps." });
+
+      // Light spice: resting can attract danger if you're on an uncleared fight node
+      const node = draft.run.nodeWeb?.nodes.find((n) => n.id === draft.run.currentNodeId);
+      if (node?.kind === "fight" && !node.cleared && localRng() < 0.45) {
+        pushLog(draft, { type: "story", text: "The quiet breaks. Something moves." });
+        draft.ui.screen = "combat";
+        startCombatNow(draft);
+      } else {
+        pushLog(draft, { type: "story", text: "The wind passes. No footsteps." });
+      }
       return draft;
     });
   };
@@ -603,6 +656,8 @@ function DragonfallMountainExilePreview() {
   const buildStation = () => {
     setState((prev) => {
       const draft = structuredClone(prev);
+      if (draft.phase !== "play" || draft.run.inCombat) return prev;
+
       const idx = draft.player.inventory.indexOf("Relay Parts");
       if (idx === -1) { pushLog(draft, { type: "system", text: "You lack Relay Parts to build a Drop Station." }); return draft; }
       draft.player.inventory.splice(idx, 1);
@@ -616,6 +671,8 @@ function DragonfallMountainExilePreview() {
   const extract = () => {
     setState((prev) => {
       const draft = structuredClone(prev);
+      if (draft.phase !== "play" || draft.run.inCombat) return prev;
+
       const items = draft.player.inventory.splice(0);
       draft.player.extracted.push(...items);
       pushLog(draft, { type: "system", text: `Extraction complete. Saved ${items.length} item(s).` });
@@ -708,6 +765,7 @@ function DragonfallMountainExilePreview() {
       next.meta = draft.meta;
       next.player.hpMax = 10 + (next.meta.legacy.startHP || 0);
       next.player.hp = next.player.hpMax;
+      next.ui.screen = "setup_weapon";
       pushLog(next, { type: "system", text: "You wake at the Beacon. The mountain waits." });
       return next;
     });
@@ -730,15 +788,27 @@ function DragonfallMountainExilePreview() {
     state.run.site?.key === "ruined_relay" ||
     currentNode?.kind === "station";
 
-  // Auto-trigger encounter when entering fight nodes
-  useEffect(() => {
-    if (state.phase !== "play") return;
-    if (state.run.inCombat) return;
-    if (state.run.danger === "unknown" && currentNode?.kind === "fight") {
-      ensureEncounter();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.run.currentNodeId, state.run.danger, state.phase]);
+  const reachable = (id) => {
+    const web = state.run.nodeWeb;
+    if (!web || !state.run.currentNodeId) return false;
+    const cur = state.run.currentNodeId;
+    return web.edges.some((e) => (e.a === cur && e.b === id) || (e.b === cur && e.a === id));
+  };
+
+  const screenSubtitle =
+    state.phase === "dead"
+      ? "☠️ Fallen"
+      : state.phase !== "play"
+        ? "Preparation"
+        : state.ui.screen === "travel_map"
+          ? "Travel"
+          : state.ui.screen === "node_intro"
+            ? "Arrival"
+            : state.ui.screen === "combat"
+              ? "Combat"
+              : state.ui.screen === "node_actions"
+                ? "Actions"
+                : "In the Mountain";
 
   return (
     <div className="min-h-screen bg-[radial-gradient(80%_60%_at_50%_0%,rgba(124,58,237,0.28),rgba(0,0,0,0)),radial-gradient(70%_60%_at_20%_20%,rgba(14,165,233,0.18),rgba(0,0,0,0)),linear-gradient(to_bottom,rgba(0,0,0,1),rgba(9,9,11,1))] text-white">
@@ -761,7 +831,7 @@ function DragonfallMountainExilePreview() {
           <div className="lg:col-span-8 flex flex-col gap-4">
             <Card
               title={`Chapter ${state.book.chapter} • Page ${state.book.page}`}
-              subtitle={state.phase === "dead" ? "☠️ Fallen" : state.phase === "play" ? "In the Mountain" : "Preparation"}
+              subtitle={screenSubtitle}
               right={
                 <div className="flex gap-2 flex-wrap justify-end">
                   <Pill>HP {state.player.hp}/{state.player.hpMax}</Pill>
@@ -785,7 +855,10 @@ function DragonfallMountainExilePreview() {
                           <div className="font-semibold">Class Lattice (visual)</div>
                           <div className="text-sm text-white/70">Weapon → Style → (Earn XP) → Element OR Cross → Titles</div>
                         </div>
-                        <Button variant="ghost" onClick={() => setState((p) => ({ ...p, ui: { ...p.ui, showClassTree: false } }))}>
+                        <Button
+                          variant="ghost"
+                          onClick={() => setState((p) => ({ ...p, ui: { ...p.ui, showClassTree: false } }))}
+                        >
                           Hide
                         </Button>
                       </div>
@@ -929,6 +1002,7 @@ function DragonfallMountainExilePreview() {
                 </div>
               ) : (
                 <div className="space-y-3">
+                  {/* Build ribbon is always visible */}
                   <div className="flex flex-wrap gap-2">
                     <Pill>Title: {state.player.title}</Pill>
                     <Pill>Weapon: {weaponObj?.name}</Pill>
@@ -939,51 +1013,59 @@ function DragonfallMountainExilePreview() {
                     <Pill>Promo: {state.player.promoTier}/?</Pill>
                   </div>
 
-                  <div className="rounded-2xl border border-white/10 p-4 bg-white/5">
-                    <div className="text-lg font-semibold">{state.run.site?.name}</div>
-                    <div className="text-sm text-white/70 mt-1">{state.run.site?.tone}</div>
-
-                    {state.run.inCombat && state.run.enemy ? (
-                      <div className="mt-3 flex items-center justify-between">
+                  {/* Screen flow */}
+                  {state.ui.screen === "travel_map" ? (
+                    <div className="rounded-2xl border border-white/10 p-4 bg-white/5">
+                      <div className="flex items-start justify-between gap-3">
                         <div>
-                          <div className="font-semibold">⚔️ {state.run.enemy.name}</div>
-                          <div className="text-xs text-white/60">Enemy DR {state.run.enemy.dr} • Attack DR {state.run.enemy.attackDR}</div>
+                          <div className="text-lg font-semibold">Map</div>
+                          <div className="text-sm text-white/70 mt-1">Choose a reachable node. Only the path ahead matters.</div>
                         </div>
-                        <div className="text-lg font-semibold">HP {state.run.enemyHP}/{state.run.enemy.hp}</div>
+                        <div className="text-xs text-white/60 pt-1">
+                          {state.player.promoTier === 0 ? (
+                            <>Earn <span className="text-white font-semibold">{Math.max(0, state.player.nextPromoAt - state.player.xp)}</span> XP for Promotion.</>
+                          ) : <>Promotion unlocked.</>}
+                        </div>
                       </div>
-                    ) : (
-                      <div className="mt-3 text-sm text-white/60">
-                        {currentNode?.kind === "fight" ? "A threat lurks here." : "This node is quiet… for now."}
-                      </div>
-                    )}
-                  </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="rounded-2xl border border-white/10 p-4">
-                      <div className="font-semibold">Map</div>
-                      <div className="text-xs text-white/60 mt-1">Choose your next node. Branch, survive, extract.</div>
                       <Divider />
+
                       <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                        <svg viewBox="0 0 100 100" className="w-full h-44">
+                        <svg viewBox="0 0 100 100" className="w-full h-48">
                           {state.run.nodeWeb?.edges.map((e, i) => {
                             const a = state.run.nodeWeb.nodes.find((n) => n.id === e.a);
                             const b = state.run.nodeWeb.nodes.find((n) => n.id === e.b);
                             if (!a || !b) return null;
                             const isNear = e.a === state.run.currentNodeId || e.b === state.run.currentNodeId;
                             return (
-                              <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                                stroke={isNear ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)"} strokeWidth={1.5}/>
+                              <line
+                                key={i}
+                                x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                                stroke={isNear ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)"}
+                                strokeWidth={1.5}
+                              />
                             );
                           })}
+
                           {state.run.nodeWeb?.nodes.map((n) => {
                             const isHere = n.id === state.run.currentNodeId;
+                            const isReach = n.revealed && reachable(n.id) && !isHere && !state.run.inCombat;
                             const fill = n.kind === "fight" ? "rgba(239,68,68,0.22)"
                               : n.kind === "station" ? "rgba(34,197,94,0.18)"
                               : "rgba(59,130,246,0.16)";
                             const stroke = isHere ? "rgba(255,255,255,0.65)" : n.revealed ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.10)";
-                            const opacity = n.revealed ? 1 : 0.3;
+                            const opacity = n.revealed ? 1 : 0.25;
+
                             return (
-                              <g key={n.id} opacity={opacity}>
+                              <g
+                                key={n.id}
+                                opacity={opacity}
+                                style={{ cursor: isReach ? "pointer" : "default" }}
+                                onClick={() => {
+                                  if (!isReach) return;
+                                  moveToNode(n.id);
+                                }}
+                              >
                                 <circle cx={n.x} cy={n.y} r={6.5} fill={fill} stroke={stroke} strokeWidth={2} />
                                 {isHere ? <circle cx={n.x} cy={n.y} r={10} fill="none" stroke="rgba(124,58,237,0.6)" strokeWidth={1.5} /> : null}
                               </g>
@@ -992,63 +1074,149 @@ function DragonfallMountainExilePreview() {
                         </svg>
 
                         <div className="flex flex-wrap gap-2 mt-2">
-                          {state.run.nodeWeb?.nodes.filter((n) => n.revealed).map((n) => {
-                            const isHere = n.id === state.run.currentNodeId;
-                            const labelIcon = n.kind === "fight" ? "⚔" : n.kind === "station" ? "⬡" : "✦";
-                            return (
-                              <Button
-                                key={n.id}
-                                variant={isHere ? "primary" : "ghost"}
-                                onClick={() => {
-                                  if (state.run.inCombat) return;
-                                  moveToNode(n.id);
-                                }}
-                                disabled={isHere || state.run.inCombat}
-                                title={n.site.name}
-                              >
-                                {labelIcon} {n.site.name}
-                              </Button>
-                            );
-                          })}
+                          {state.run.nodeWeb?.nodes
+                            .filter((n) => n.revealed && reachable(n.id))
+                            .map((n) => {
+                              const isHere = n.id === state.run.currentNodeId;
+                              const labelIcon = n.kind === "fight" ? "⚔" : n.kind === "station" ? "⬡" : "✦";
+                              return (
+                                <Button
+                                  key={n.id}
+                                  variant={isHere ? "primary" : "ghost"}
+                                  onClick={() => {
+                                    if (isHere || state.run.inCombat) return;
+                                    moveToNode(n.id);
+                                  }}
+                                  disabled={isHere || state.run.inCombat}
+                                  title={n.site.name}
+                                >
+                                  {labelIcon} {n.site.name}
+                                </Button>
+                              );
+                            })}
+                        </div>
+
+                        <div className="text-xs text-white/50 mt-2">
+                          Tip: circles are clickable. Only reachable nodes appear below.
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {state.ui.screen === "node_intro" ? (
+                    <div className="rounded-2xl border border-white/10 p-4 bg-white/5">
+                      <div className="text-sm text-white/60">Arrival</div>
+                      <div className="text-2xl font-semibold mt-1">{state.run.site?.name}</div>
+                      <div className="text-sm text-white/70 mt-2 leading-relaxed">{state.run.site?.tone}</div>
+
+                      <Divider />
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button onClick={continueFromNodeIntro}>
+                          Continue
+                        </Button>
+                        <Button variant="ghost" onClick={goToMap} disabled={state.run.inCombat}>
+                          Back to Map
+                        </Button>
+                      </div>
+
+                      <div className="text-xs text-white/60 mt-3">
+                        {currentNode?.kind === "fight" && !currentNode?.cleared
+                          ? "You sense a threat here."
+                          : currentNode?.kind === "station"
+                            ? "A relay sleeps here. Extraction is possible."
+                            : "Quiet… for now."}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {state.ui.screen === "combat" ? (
+                    <div className="rounded-2xl border border-white/10 p-4 bg-white/5 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm text-white/60">Combat</div>
+                          <div className="text-xl font-semibold mt-1">⚔️ {state.run.enemy?.name}</div>
+                          <div className="text-xs text-white/60 mt-1">
+                            Enemy DR {state.run.enemy?.dr} • Attack DR {state.run.enemy?.attackDR}
+                          </div>
+                        </div>
+                        <div className="text-lg font-semibold">
+                          HP {state.run.enemyHP}/{state.run.enemy?.hp}
                         </div>
                       </div>
 
                       <Divider />
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button onClick={() => combatAction("attack")}>Attack</Button>
+                        <Button variant="ghost" onClick={() => combatAction("defend")}>Brace</Button>
+                        <Button variant="ghost" onClick={() => combatAction("maneuver")}>Maneuver</Button>
+                        {skills
+                          .filter((s) => s.kind === "action" && !["attack","defend","maneuver"].includes(s.key))
+                          .map((s) => (
+                            <Button key={s.key} variant="ghost" onClick={() => combatAction(s.key)}>
+                              {s.name}
+                            </Button>
+                          ))}
+                      </div>
+
+                      <div className="text-xs text-white/60">
+                        (When you win, you’ll land in <span className="text-white font-semibold">Node Actions</span>.)
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {state.ui.screen === "node_actions" ? (
+                    <div className="rounded-2xl border border-white/10 p-4 bg-white/5 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm text-white/60">At Location</div>
+                          <div className="text-xl font-semibold mt-1">{state.run.site?.name}</div>
+                          <div className="text-xs text-white/60 mt-1">
+                            {currentNode?.kind === "station" ? "⬡ Station Node" : currentNode?.kind === "fight" ? "⚔ Fight Node" : "✦ Event Node"}
+                            {currentNode?.cleared ? " • Cleared" : ""}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="ghost" onClick={goToMap} disabled={state.run.inCombat}>Return to Map</Button>
+                        </div>
+                      </div>
+
+                      <Divider />
+
                       <div className="flex flex-wrap gap-2">
                         <Button variant="ghost" onClick={rest} disabled={state.run.inCombat}>Rest</Button>
-                        <Button variant="ghost" onClick={buildStation} disabled={state.run.inCombat} title="Requires Relay Parts">Build Drop Station</Button>
-                        <Button variant="ghost" onClick={extract} disabled={!canExtractHere || state.run.inCombat} title={canExtractHere ? "Save carried items." : "No station here."}>Extract</Button>
+                        <Button
+                          variant="ghost"
+                          onClick={buildStation}
+                          disabled={state.run.inCombat}
+                          title="Requires Relay Parts"
+                        >
+                          Build Drop Station
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          onClick={extract}
+                          disabled={!canExtractHere || state.run.inCombat}
+                          title={canExtractHere ? "Save carried items." : "No station here."}
+                        >
+                          Extract
+                        </Button>
+
+                        {currentNode?.kind === "fight" && !currentNode?.cleared ? (
+                          <Button onClick={() => { setState(p => ({ ...p, ui: { ...p.ui, screen: "combat" } })); setTimeout(() => { /* no-op */ }, 0); }}>
+                            Enter Combat
+                          </Button>
+                        ) : null}
+                      </div>
+
+                      <div className="text-sm text-white/70 leading-relaxed">
+                        {canExtractHere
+                          ? "Extraction is available here."
+                          : "No extraction point here. You’ll need a station node or a built Drop Station."}
                       </div>
                     </div>
-
-                    <div className="rounded-2xl border border-white/10 p-4">
-                      <div className="font-semibold">Actions</div>
-                      <div className="text-xs text-white/60 mt-1">Dice decide. Failure is real danger.</div>
-                      <Divider />
-
-                      {state.run.inCombat ? (
-                        <div className="flex flex-wrap gap-2">
-                          <Button onClick={() => combatAction("attack")}>Attack</Button>
-                          <Button variant="ghost" onClick={() => combatAction("defend")}>Brace</Button>
-                          <Button variant="ghost" onClick={() => combatAction("maneuver")}>Maneuver</Button>
-                          {skills
-                            .filter((s) => s.kind === "action" && !["attack","defend","maneuver"].includes(s.key))
-                            .map((s) => (
-                              <Button key={s.key} variant="ghost" onClick={() => combatAction(s.key)}>
-                                {s.name}
-                              </Button>
-                            ))}
-                        </div>
-                      ) : (
-                        <div className="text-sm text-white/70">
-                          Choose a node on the map to advance.
-                          {state.player.promoTier === 0 ? (
-                            <div className="mt-2 text-xs text-white/60">Earn {state.player.nextPromoAt - state.player.xp} more XP to unlock your first promotion.</div>
-                          ) : null}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  ) : null}
                 </div>
               )}
             </Card>
@@ -1129,7 +1297,8 @@ function DragonfallMountainExilePreview() {
 
             <Card title="Help" subtitle="How this preview works">
               <div className="text-sm text-white/70 leading-relaxed space-y-2">
-                <div><span className="font-semibold text-white">Map:</span> click a revealed node to move.</div>
+                <div><span className="font-semibold text-white">Flow:</span> Map → Arrival → Combat/Actions.</div>
+                <div><span className="font-semibold text-white">Map:</span> only reachable nodes are selectable.</div>
                 <div><span className="font-semibold text-white">Fights:</span> give loot + XP.</div>
                 <div><span className="font-semibold text-white">Promotion:</span> at 4 XP, choose <span className="font-semibold text-white">Element OR Cross</span>.</div>
                 <div><span className="font-semibold text-white">Extraction:</span> only extracted loot is permanent.</div>
@@ -1196,12 +1365,10 @@ function DragonfallMountainExilePreview() {
   );
 }
 
-
 ReactDOM.render(
   React.createElement(DragonfallMountainExilePreview),
   document.getElementById("root")
 );
-
     </script>
   </body>
 </html>
