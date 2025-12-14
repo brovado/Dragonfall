@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Dragonfall Preview</title>
 
-    <!-- Tailwind (for your current UI classes) -->
+    <!-- Tailwind -->
     <script src="https://cdn.tailwindcss.com"></script>
 
     <!-- React (UMD builds) -->
@@ -20,1524 +20,1889 @@
     <div id="root"></div>
 
     <script type="text/babel">
-const { useEffect, useMemo, useRef, useState } = React;
-
-/**
- * DRAGONFALL: MOUNTAIN EXILE — v0.3
- * Upgrades in this iteration:
- * - Version bump visible on title/header
- * - TRUE MAP travel: named locations + adjacency (not “node web”)
- * - Enemies scale by area level
- * - Safe locations (and built beacons) have NO monsters (rest is safe there)
- * - Early game flow: Weapon -> Style -> travel/fights -> XP gate -> Promotion (Element OR Cross)
- * - Loot now has meaning & value; extracted loot can be sold for gold
- */
-
-const VERSION = "0.3.0";
-const SAVE_KEY = "dragonfall_save_v03";
-
-function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
-function uid() { return Math.random().toString(16).slice(2) + Date.now().toString(16); }
-
-// Deterministic RNG (mulberry32)
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-function rollDie(rng, sides) { return 1 + Math.floor(rng() * sides); }
-function fmtBonus(b) { if (b === 0) return "+0"; return b > 0 ? `+${b}` : `${b}`; }
-
-const DR = { easy: 10, standard: 13, hard: 16, extreme: 19 };
-
-// --- Builds -----------------------------------------------------------------
-
-const WEAPONS = [
-  {
-    key: "sword",
-    name: "Sword",
-    tagline: "Close combat • control • endurance",
-    bias: { might: 1, finesse: 1, wits: 0, will: 0 },
-    styles: [
-      { key: "guard", name: "Guard", desc: "Defense, counters, zone control." },
-      { key: "edge", name: "Edge", desc: "Precision, crits, bleed." },
-      { key: "fury", name: "Fury", desc: "Momentum, risk, finishing." },
-    ],
-  },
-  {
-    key: "bow",
-    name: "Bow",
-    tagline: "Range • positioning • tempo",
-    bias: { might: 0, finesse: 2, wits: 1, will: 0 },
-    styles: [
-      { key: "sniper", name: "Sniper", desc: "Single-target lethality." },
-      { key: "skirmisher", name: "Skirmisher", desc: "Mobility, rapid shots." },
-      { key: "trapper", name: "Trapper", desc: "Terrain control, prep." },
-    ],
-  },
-  {
-    key: "wand",
-    name: "Wand",
-    tagline: "Channeling • volatility • rituals",
-    bias: { might: 0, finesse: 0, wits: 1, will: 2 },
-    styles: [
-      { key: "invoker", name: "Invoker", desc: "Raw spellcasting." },
-      { key: "binder", name: "Binder", desc: "Debuffs, wards, control." },
-      { key: "channeler", name: "Channeler", desc: "Sustained power, scaling." },
-    ],
-  },
-];
-
-const ELEMENTS = [
-  { key: "fire", name: "Fire", vibe: "Escalation • burning risk" },
-  { key: "ice", name: "Ice", vibe: "Control • delay • precision" },
-  { key: "storm", name: "Storm", vibe: "Speed • chaining chaos" },
-  { key: "earth", name: "Earth", vibe: "Endurance • retaliation" },
-  { key: "void", name: "Void", vibe: "Sacrifice • inversion" },
-];
-
-// --- Loot (meaning + value) -------------------------------------------------
-// Items are objects: { id, key, name, value, tags[], desc }
-const LOOT = [
-  { key: "iron_shards", name: "Iron Shards", value: 3, tags: ["metal","common"], desc: "Good for bracing plates and crude repairs." },
-  { key: "salt_rope", name: "Salt Rope", value: 4, tags: ["utility","common"], desc: "Cures meat, binds wounds, binds deals." },
-  { key: "old_sigil", name: "Old Sigil", value: 6, tags: ["arcane","uncommon"], desc: "A stamped charm. Warm when lies are spoken." },
-
-  { key: "relay_parts", name: "Relay Parts", value: 8, tags: ["beacon","uncommon"], desc: "Spare coils and crystal housings from the old beacons." },
-  { key: "beacon_ink", name: "Beacon Ink", value: 5, tags: ["arcane","common"], desc: "Black-blue. Refuses to dry in sunlight." },
-  { key: "ration_bar", name: "Ration Bar", value: 2, tags: ["food","common"], desc: "Dense. Bitter. Effective." },
-
-  { key: "scaled_fragment", name: "Scaled Fragment", value: 7, tags: ["wyrm","uncommon"], desc: "A scale sliver. Hard as sin." },
-  { key: "charcoal_resin", name: "Charcoal Resin", value: 6, tags: ["alchemy","uncommon"], desc: "Burns slow. Clings to steel." },
-  { key: "bright_glass", name: "Bright Glass", value: 9, tags: ["rare","arcane"], desc: "A shard that catches moonlight even at noon." },
-
-  { key: "ember_fang", name: "Ember Fang", value: 12, tags: ["trophy","wyrm","rare"], desc: "A trophy that buys respect—or trouble." },
-  { key: "ward_coil", name: "Ward Coil", value: 10, tags: ["beacon","rare"], desc: "A humming coil that stabilizes hostile air." },
-  { key: "void_chit", name: "Void Chit", value: 14, tags: ["void","rare"], desc: "A coin that feels heavier than it should." },
-];
-
-function mkLootItem(baseKey, seed) {
-  const base = LOOT.find(x => x.key === baseKey) || LOOT[0];
-  return { id: uid(), ...base, seed };
-}
-
-function sumLootValue(items) {
-  return (items || []).reduce((a, it) => a + (it?.value || 0), 0);
-}
-
-// --- Map (named locations + adjacency) --------------------------------------
-// kind: "safe" | "danger" | "station" | "event"
-const MAP_LOCATIONS = [
-  {
-    id: "beacon_gate",
-    name: "Beacon Gate",
-    kind: "safe",
-    level: 0,
-    region: "Ember March",
-    tone: "A basalt arch lit by ward-light. Survivors barter in whispers beneath the hum.",
-    lootTable: ["ration_bar","beacon_ink"],
-    coords: { x: 10, y: 55 },
-    links: ["ashway_bridge","ruined_relay"]
-  },
-  {
-    id: "ashway_bridge",
-    name: "Ashway Bridge",
-    kind: "danger",
-    level: 1,
-    region: "Ember March",
-    tone: "Black water churns beneath a cracked span. Wind howls through broken stone ribs.",
-    lootTable: ["iron_shards","salt_rope","old_sigil"],
-    coords: { x: 28, y: 35 },
-    links: ["beacon_gate","ruined_relay","wyrm_path"]
-  },
-  {
-    id: "ruined_relay",
-    name: "Ruined Beacon Relay",
-    kind: "station",
-    level: 1,
-    region: "Ember March",
-    tone: "A collapsed outpost with a dormant crystal core. Someone died here recently.",
-    lootTable: ["relay_parts","beacon_ink","ration_bar"],
-    coords: { x: 30, y: 75 },
-    links: ["beacon_gate","ashway_bridge","wyrm_path","cinder_watch"]
-  },
-  {
-    id: "wyrm_path",
-    name: "Wyrm Path",
-    kind: "danger",
-    level: 2,
-    region: "Ember March",
-    tone: "Claw marks score the rock. Heat breathes from the cracks like a sleeping furnace.",
-    lootTable: ["scaled_fragment","charcoal_resin","bright_glass"],
-    coords: { x: 52, y: 55 },
-    links: ["ashway_bridge","ruined_relay","cinder_watch","shardfall_slope"]
-  },
-  {
-    id: "cinder_watch",
-    name: "Cinderwatch Overlook",
-    kind: "event",
-    level: 2,
-    region: "Ember March",
-    tone: "A lookout tower snapped in half. The horizon is a bruise—purple, blue, and smoke.",
-    lootTable: ["old_sigil","bright_glass","ward_coil"],
-    coords: { x: 52, y: 20 },
-    links: ["ruined_relay","wyrm_path"]
-  },
-  {
-    id: "shardfall_slope",
-    name: "Shardfall Slope",
-    kind: "danger",
-    level: 3,
-    region: "Upper Scree",
-    tone: "A slope of glassy rock. Every step threatens a singing collapse.",
-    lootTable: ["bright_glass","ember_fang","void_chit"],
-    coords: { x: 76, y: 55 },
-    links: ["wyrm_path"]
-  },
-];
-
-// --- Enemies (scaled by area level) -----------------------------------------
-// (kept simple: each tier has a pool; we pick based on location.level)
-const ENEMY_POOLS = {
-  1: [
-    { key: "wyrmling", name: "Wyrmling Scout", hp: 8, dr: 12, attackDR: 12, dmg: [1, 3],
-      desc: "A juvenile dragonkin with a barbed spear and too much confidence." },
-    { key: "ashwolf", name: "Ash-Wolf", hp: 10, dr: 13, attackDR: 12, dmg: [2, 4],
-      desc: "Grey fur dusted in ember. It circles like a hungry thought." },
-  ],
-  2: [
-    { key: "cultist", name: "Scalebound Cultist", hp: 12, dr: 13, attackDR: 13, dmg: [2, 5],
-      desc: "Eyes like candles. The air around them tastes of coin and smoke." },
-    { key: "mire_drake", name: "Mire-Drake Strider", hp: 13, dr: 14, attackDR: 13, dmg: [2, 6],
-      desc: "A low-slung drake that moves like a crack in the ground." },
-  ],
-  3: [
-    { key: "ember_knight", name: "Ember Knight Remnant", hp: 16, dr: 15, attackDR: 14, dmg: [3, 7],
-      desc: "Armor fused to bone. It remembers an oath and hates you for breathing." },
-    { key: "voidling", name: "Voidling", hp: 15, dr: 15, attackDR: 15, dmg: [3, 8],
-      desc: "A shadow with teeth—more absence than body." },
-  ],
-};
-
-function pickEnemyForLevel(rng, lvl) {
-  const tier = clamp(lvl, 1, 3);
-  const pool = ENEMY_POOLS[tier] || ENEMY_POOLS[1];
-  return pool[Math.floor(rng() * pool.length)];
-}
-
-// --- Stats / Titles ----------------------------------------------------------
-
-function computeStats(base, weaponBias, styleKey, elementKey, crossKey) {
-  const s = { ...base };
-  for (const k of Object.keys(weaponBias)) s[k] += weaponBias[k];
-
-  if (styleKey) {
-    const map = {
-      guard: { might: 1 }, edge: { finesse: 1 }, fury: { might: 1 },
-      sniper: { finesse: 1, wits: 1 }, skirmisher: { finesse: 1 }, trapper: { wits: 2 },
-      invoker: { wits: 1, will: 1 }, binder: { wits: 1, will: 1 }, channeler: { will: 2 },
-    };
-    const add = map[styleKey] || {};
-    for (const k of Object.keys(add)) s[k] = (s[k] || 0) + add[k];
-  }
-
-  if (elementKey) {
-    const map = {
-      fire: { might: 1 }, ice: { finesse: 1 }, storm: { will: 1 }, earth: { might: 1 }, void: { will: 1 },
-    };
-    const add = map[elementKey] || {};
-    for (const k of Object.keys(add)) s[k] = (s[k] || 0) + add[k];
-  }
-
-  // Cross-training = flexibility, less raw
-  if (crossKey) { s.wits += 1; s.finesse += 1; s.might -= 1; }
-
-  s.might = clamp(s.might || 0, -1, 6);
-  s.finesse = clamp(s.finesse || 0, -1, 6);
-  s.wits = clamp(s.wits || 0, -1, 6);
-  s.will = clamp(s.will || 0, -1, 6);
-  return s;
-}
-
-function titleFromBuild(weaponKey, styleKey, elementKey, crossStyle) {
-  const weapon = WEAPONS.find((w) => w.key === weaponKey)?.name || "";
-  const style = WEAPONS.flatMap((w) => w.styles).find((s) => s.key === styleKey)?.name || "";
-  const el = ELEMENTS.find((e) => e.key === elementKey)?.name || "";
-
-  if (!weaponKey) return "Unbound";
-  if (!styleKey) return weapon;
-
-  if (crossStyle) {
-    const crossName = WEAPONS.flatMap((w) => w.styles).find((s) => s.key === crossStyle)?.name || "Cross";
-    return `${weapon} ${style} • ${crossName}`;
-  }
-
-  if (elementKey) {
-    const base = `${el}${weapon}`;
-    const suffixMap = {
-      Guard: "Sentinel", Edge: "Duelist", Fury: "Reaver",
-      Sniper: "Marksman", Skirmisher: "Rover", Trapper: "Warden",
-      Invoker: "Invoker", Binder: "Binder", Channeler: "Channeler",
-    };
-    return `${base} ${suffixMap[style] || "Adept"}`;
-  }
-
-  return `${weapon} ${style}`;
-}
-
-function rollCheck(rng, label, statBonus, dr) {
-  const d20 = rollDie(rng, 20);
-  const total = d20 + statBonus;
-  return { label, d20, statBonus, total, dr, success: total >= dr };
-}
-function rollDamage(rng, min, max) { return min + Math.floor(rng() * (max - min + 1)); }
-
-function computeAttackMod(stats, weaponKey) {
-  if (weaponKey === "sword") return stats.might + Math.floor(stats.finesse / 2);
-  if (weaponKey === "bow") return stats.finesse + Math.floor(stats.wits / 2);
-  if (weaponKey === "wand") return stats.will + Math.floor(stats.wits / 2);
-  return 0;
-}
-function computeDefenseMod(stats, styleKey) {
-  let mod = Math.floor((stats.might + stats.will) / 2);
-  if (styleKey === "guard") mod += 1;
-  if (styleKey === "trapper") mod += 1;
-  if (styleKey === "binder") mod += 1;
-  return mod;
-}
-
-function skillListForBuild(weaponKey, styleKey, elementKey, crossStyle) {
-  const base = [];
-  const attackLabel = weaponKey === "bow" ? "Shoot" : weaponKey === "wand" ? "Cast" : "Strike";
-  base.push({ key: "attack", name: attackLabel, kind: "action", desc: "Roll to hit. On success, deal damage." });
-  base.push({ key: "defend", name: "Brace", kind: "action", desc: "Raise defense this round. Reduce damage on hit." });
-  base.push({ key: "maneuver", name: "Maneuver", kind: "action", desc: "Reposition to set up advantage." });
-
-  const specials = {
-    guard: { key: "riposte", name: "Shield-Check", desc: "A controlled shove. Safe, reliable." },
-    edge: { key: "bleed", name: "Open Vein", desc: "Higher damage; risk a bite-back." },
-    fury: { key: "lunge", name: "Lunge", desc: "Big swing; missing hurts." },
-    sniper: { key: "aim", name: "Aim", desc: "Take a breath; next shot hits harder." },
-    skirmisher: { key: "dash", name: "Dash Shot", desc: "Attack and slip away on success." },
-    trapper: { key: "snare", name: "Snare", desc: "Hinder the next enemy attack." },
-    invoker: { key: "bolt", name: "Arc Bolt", desc: "High variance magic strike." },
-    binder: { key: "hex", name: "Hex", desc: "Weaken defenses, then hit." },
-    channeler: { key: "focus", name: "Focus", desc: "Charge power; next roll +2." },
-  };
-  if (styleKey && specials[styleKey]) base.push({ ...specials[styleKey], kind: "action" });
-
-  const elementPassives = {
-    fire: "Fire: crits scorch (+1).",
-    ice: "Ice: maneuvers slow (enemy −1 next roll).",
-    storm: "Storm: once per scene, reroll a d20.",
-    earth: "Earth: Brace reduces +1 extra damage.",
-    void: "Void: when low HP, +1 to Will rolls.",
-  };
-  if (elementKey) base.push({ key: `passive_${elementKey}`, name: "Affinity", kind: "passive", desc: elementPassives[elementKey] });
-
-  if (crossStyle) {
-    const crossName = WEAPONS.flatMap((w) => w.styles).find((s) => s.key === crossStyle)?.name || "Cross";
-    base.push({ key: "cross", name: "Cross-Training", kind: "passive", desc: `You carry a slice of ${crossName}.` });
-  }
-  return base;
-}
-
-// --- Game State --------------------------------------------------------------
-
-function mkNewGame(seed = Date.now()) {
-  const gameId = uid();
-  const rngSeed = (seed ^ gameId.length) >>> 0;
-
-  return {
-    version: VERSION,
-    gameId,
-    rngSeed,
-    phase: "start", // start | chooseStyle | play | dead
-    book: { chapter: 1, page: 1 },
-    meta: { echoes: 0, legacy: { startHP: 0, revealHints: 0 } },
-
-    player: {
-      name: "",
-      weapon: null,
-      style: null,
-      element: null,
-      crossStyle: null,
-      baseStats: { might: 0, finesse: 0, wits: 0, will: 0 },
-      stats: { might: 0, finesse: 0, wits: 0, will: 0 },
-      hpMax: 10,
-      hp: 10,
-      gold: 0,
-      xp: 0,
-      promoTier: 0,   // 0=weapon+style only, 1=affinity/cross unlocked
-      nextPromoAt: 4, // keep your original gating; fights give 2 XP → “a lil xp” before promo
-      inventory: [],  // carried loot items (objects)
-      extracted: [],  // extracted loot items (objects)
-      stationBuiltAt: {}, // { locationId: true }
-      title: "Unbound",
-    },
-
-    run: {
-      depth: 0,
-      region: "Ember March",
-      currentLocationId: "beacon_gate",
-      discovered: { beacon_gate: true }, // fog-of-war lite
-      cleared: {}, // { locationId: true } for danger places
-      inCombat: false,
-      enemy: null,
-      enemyHP: 0,
-      log: [],
-    },
-
-    ui: {
-      showClassTree: true,
-      showPromotion: false,
-      showClassReveal: false,
-      classRevealText: "",
-    },
-  };
-}
-
-function pushLog(state, entry) {
-  const line = { id: uid(), t: Date.now(), ...entry };
-  state.run.log = [line, ...state.run.log].slice(0, 160);
-}
-
-// --- UI components -----------------------------------------------------------
-
-function Card({ title, subtitle, children, right }) {
-  return (
-    <div className="rounded-2xl bg-white/5 border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
-      <div className="px-4 py-3 border-b border-white/10 flex items-start justify-between gap-3">
-        <div>
-          <div className="text-lg font-semibold tracking-tight">{title}</div>
-          {subtitle ? <div className="text-sm text-white/70 mt-0.5">{subtitle}</div> : null}
-        </div>
-        {right ? <div className="shrink-0">{right}</div> : null}
-      </div>
-      <div className="p-4">{children}</div>
-    </div>
-  );
-}
-function Pill({ children }) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs bg-white/10 border border-white/10">
-      {children}
-    </span>
-  );
-}
-function Button({ children, onClick, variant = "primary", disabled, title }) {
-  const base = "rounded-xl px-3 py-2 text-sm font-medium border transition active:scale-[0.99]";
-  const styles = {
-    primary: "bg-white text-black border-white/20 hover:bg-white/90 disabled:opacity-50",
-    ghost: "bg-white/5 text-white border-white/10 hover:bg-white/10 disabled:opacity-50",
-    danger: "bg-red-500/15 text-red-200 border-red-500/30 hover:bg-red-500/20 disabled:opacity-50",
-  };
-  return (
-    <button className={`${base} ${styles[variant]}`} onClick={onClick} disabled={disabled} title={title}>
-      {children}
-    </button>
-  );
-}
-function Divider() { return <div className="h-px bg-white/10 my-3" />; }
-
-function kindBadge(kind, beaconHere) {
-  if (beaconHere) return { label: "SAFE • BEACON", cls: "bg-emerald-500/15 text-emerald-200 border-emerald-500/30" };
-  if (kind === "safe") return { label: "SAFE", cls: "bg-emerald-500/15 text-emerald-200 border-emerald-500/30" };
-  if (kind === "station") return { label: "RELAY", cls: "bg-sky-500/15 text-sky-200 border-sky-500/30" };
-  if (kind === "event") return { label: "EVENT", cls: "bg-indigo-500/15 text-indigo-200 border-indigo-500/30" };
-  return { label: "DANGER", cls: "bg-red-500/15 text-red-200 border-red-500/30" };
-}
-
-// --- Main -------------------------------------------------------------------
-
-function DragonfallMountainExilePreview() {
-  const [state, setState] = useState(() => mkNewGame());
-  const [toast, setToast] = useState(null);
-  const toastTimer = useRef(null);
-
-  const weaponObj = useMemo(() => WEAPONS.find((w) => w.key === state.player.weapon) || null, [state.player.weapon]);
-  const styleObj = useMemo(
-    () => WEAPONS.flatMap((w) => w.styles).find((s) => s.key === state.player.style) || null,
-    [state.player.style]
-  );
-  const elementObj = useMemo(() => ELEMENTS.find((e) => e.key === state.player.element) || null, [state.player.element]);
-
-  const skills = useMemo(
-    () => skillListForBuild(state.player.weapon, state.player.style, state.player.element, state.player.crossStyle),
-    [state.player.weapon, state.player.style, state.player.element, state.player.crossStyle]
-  );
-
-  const loc = useMemo(
-    () => MAP_LOCATIONS.find(x => x.id === state.run.currentLocationId) || MAP_LOCATIONS[0],
-    [state.run.currentLocationId]
-  );
-
-  const beaconHere = !!state.player.stationBuiltAt?.[loc.id];
-  const safeHere = loc.kind === "safe" || beaconHere;
-
-  const showToast = (msg) => {
-    setToast(msg);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 2200);
-  };
-
-  const recalcPlayer = (draft) => {
-    const w = WEAPONS.find((x) => x.key === draft.player.weapon);
-    const bias = w?.bias || { might: 0, finesse: 0, wits: 0, will: 0 };
-    draft.player.stats = computeStats(
-      draft.player.baseStats,
-      bias,
-      draft.player.style,
-      draft.player.element,
-      draft.player.crossStyle
-    );
-    const hpBase = 10 + (draft.meta.legacy.startHP || 0);
-    draft.player.hpMax = hpBase;
-    draft.player.hp = clamp(draft.player.hp, 0, hpBase);
-    draft.player.title = titleFromBuild(draft.player.weapon, draft.player.style, draft.player.element, draft.player.crossStyle);
-  };
-
-  const saveGame = () => {
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); showToast("Saved."); }
-    catch { showToast("Save failed."); }
-  };
-  const loadGame = () => {
-    try {
-      const raw = localStorage.getItem(SAVE_KEY);
-      if (!raw) return showToast("No save found.");
-      const parsed = JSON.parse(raw);
-      if (!parsed?.version) return showToast("Save invalid.");
-      setState(parsed);
-      showToast("Loaded.");
-    } catch { showToast("Load failed."); }
-  };
-  const clearSave = () => { try { localStorage.removeItem(SAVE_KEY); showToast("Save cleared."); } catch { showToast("Could not clear."); } };
-
-  const hardReset = () => {
-    const next = mkNewGame(Date.now());
-    next.meta = state.meta; // carry meta
-    next.player.hpMax = 10 + (next.meta.legacy.startHP || 0);
-    next.player.hp = next.player.hpMax;
-    pushLog(next, { type: "system", text: "New run started." });
-    setState(next);
-    showToast("New run.");
-  };
-
-  useEffect(() => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.run.log.length) return prev; // don’t spam on re-mount
-      pushLog(draft, { type: "story", text: "Dragons rule the skies. Cities survive as beacons. The Mountain Expanse pays in blood and salvage." });
-      pushLog(draft, { type: "story", text: "Travel by named places. Only adjacent routes are possible." });
-      pushLog(draft, { type: "story", text: "Promotions require XP. Only extracted loot endures—and extracted loot can be sold at safe places." });
-      return draft;
-    });
-  }, []);
-
-  // --- Early game flow: Weapon -> Style -> (play) ----------------------------
-
-  const chooseWeapon = (weaponKey) => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      draft.player.weapon = weaponKey;
-      recalcPlayer(draft);
-      draft.phase = "chooseStyle";
-      pushLog(draft, { type: "system", text: `Armament chosen: ${weaponKey.toUpperCase()}.` });
-      return draft;
-    });
-  };
-
-  const chooseStyle = (styleKey) => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      draft.player.style = styleKey;
-      recalcPlayer(draft);
-
-      draft.phase = "play";
-      draft.run.depth = 1;
-      draft.run.currentLocationId = "beacon_gate";
-      draft.run.discovered = { beacon_gate: true };
-      draft.run.cleared = {};
-      draft.run.inCombat = false;
-      draft.run.enemy = null;
-      draft.run.enemyHP = 0;
-
-      pushLog(draft, { type: "system", text: `Style chosen: ${styleKey.toUpperCase()}.` });
-      pushLog(draft, { type: "story", text: "You are torn into light. Then—cold stone, thin air, and the smell of ash." });
-      pushLog(draft, { type: "story", text: "The Beacon Gate receives you without joy." });
-      return draft;
-    });
-  };
-
-  // --- Encounters / Combat ---------------------------------------------------
-
-  const startEncounterIfAllowed = (draft, location) => {
-    // No encounters in safe places or beacon-built places
-    const isBeacon = !!draft.player.stationBuiltAt?.[location.id];
-    const isSafe = location.kind === "safe" || isBeacon;
-
-    if (isSafe) {
-      draft.run.inCombat = false;
-      draft.run.enemy = null;
-      draft.run.enemyHP = 0;
-      return;
-    }
-
-    // Stations and events are “usually” safe unless you want later variants.
-    // For now: station/event do not auto-fight; danger does.
-    if (location.kind !== "danger") {
-      draft.run.inCombat = false;
-      draft.run.enemy = null;
-      draft.run.enemyHP = 0;
-      return;
-    }
-
-    // If already cleared, no fight on revisit (preview rule)
-    if (draft.run.cleared?.[location.id]) {
-      draft.run.inCombat = false;
-      draft.run.enemy = null;
-      draft.run.enemyHP = 0;
-      return;
-    }
-
-    const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ location.level ^ 0xBADA55);
-    const enemy = pickEnemyForLevel(localRng, location.level);
-
-    draft.run.inCombat = true;
-    draft.run.enemy = { ...enemy, areaLevel: location.level };
-    draft.run.enemyHP = enemy.hp + Math.floor(location.level / 2); // slight scaling
-    pushLog(draft, { type: "story", text: `⚔️ ${enemy.name} appears (${location.name}). ${enemy.desc}` });
-  };
-
-  const takeDamage = (draft, amount, reason) => {
-    draft.player.hp = clamp(draft.player.hp - amount, 0, draft.player.hpMax);
-    pushLog(draft, { type: "system", text: `You take ${amount} damage (${reason}).` });
-    if (draft.player.hp <= 0) {
-      draft.phase = "dead";
-      const echoes = 2 + draft.run.depth + Math.floor(draft.player.gold / 5);
-      draft.meta.echoes += echoes;
-      pushLog(draft, { type: "story", text: "☠️ You fall. The mountain keeps what you failed to extract." });
-      pushLog(draft, { type: "system", text: `You gain ${echoes} Echoes at the Beacon.` });
-    }
-  };
-
-  const enemyTurn = (draft, context = "combat") => {
-    const enemy = draft.run.enemy;
-    if (!enemy) return;
-
-    const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0x1111 ^ draft.run.enemyHP);
-    const defMod = computeDefenseMod(draft.player.stats, draft.player.style);
-    const defendActive = !!draft.run._defendActive;
-    const braceBonus = defendActive ? 2 : 0;
-
-    const check = rollCheck(localRng, `${enemy.name} attacks`, defMod + braceBonus, enemy.attackDR);
-    pushLog(draft, { type: "roll", text: `${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "HIT" : "MISS"}` });
-
-    if (check.success) {
-      let dmg = rollDamage(localRng, enemy.dmg[0], enemy.dmg[1]) + Math.floor((enemy.areaLevel || 1) / 3);
-      if (defendActive) dmg = Math.max(0, dmg - 1 - (draft.player.element === "earth" ? 1 : 0));
-      takeDamage(draft, dmg, context);
-    } else {
-      pushLog(draft, { type: "system", text: "You avoid the blow." });
-    }
-    draft.run._defendActive = false;
-  };
-
-  const dropLootFromLocation = (draft, location) => {
-    const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ location.level ^ 0xC0FFEE);
-    const table = location.lootTable?.length ? location.lootTable : ["iron_shards"];
-    const pick = table[Math.floor(localRng() * table.length)];
-    const item = mkLootItem(pick, `${location.id}:${draft.run.depth}`);
-    // slight value nudge by area level
-    item.value = item.value + Math.max(0, location.level - 1);
-    return item;
-  };
-
-  const endCombatWin = (draft) => {
-    const location = MAP_LOCATIONS.find(x => x.id === draft.run.currentLocationId) || MAP_LOCATIONS[0];
-    const loot = dropLootFromLocation(draft, location);
-
-    draft.player.inventory.push(loot);
-
-    const xpGain = 2; // keeps your original “a lil xp” cadence
-    draft.player.xp += xpGain;
-
-    draft.run.inCombat = false;
-    draft.run.enemy = null;
-    draft.run.enemyHP = 0;
-
-    draft.run.cleared = draft.run.cleared || {};
-    draft.run.cleared[location.id] = true;
-
-    pushLog(draft, { type: "system", text: `Victory. Loot gained: ${loot.name} (value ${loot.value}). +${xpGain} XP.` });
-
-    // Promotion unlock
-    if (draft.player.promoTier === 0 && draft.player.xp >= draft.player.nextPromoAt) {
-      draft.ui.showPromotion = true;
-      pushLog(draft, { type: "story", text: "Something in you shifts. A new discipline is ready to bind." });
-    }
-  };
-
-  const combatAction = (key) => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.phase !== "play" || !draft.run.inCombat || !draft.run.enemy) return prev;
-
-      const enemy = draft.run.enemy;
-      const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ 0x2222 ^ Date.now());
-
-      const atkMod = computeAttackMod(draft.player.stats, draft.player.weapon);
-      const defMod = computeDefenseMod(draft.player.stats, draft.player.style);
-
-      const doAttack = (label, bonus, dmgMin, dmgMax, onMiss) => {
-        const check = rollCheck(localRng, label, atkMod + bonus, enemy.dr);
-        pushLog(draft, { type: "roll", text: `${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
-
-        if (check.success) {
-          let dmg = rollDamage(localRng, dmgMin, dmgMax) + Math.floor((enemy.areaLevel || 1) / 3);
-          if (check.d20 === 20) {
-            dmg += 1;
-            if (draft.player.element === "fire") dmg += 1;
-            pushLog(draft, { type: "system", text: "Critical impact." });
-          }
-          draft.run.enemyHP = Math.max(0, draft.run.enemyHP - dmg);
-          pushLog(draft, { type: "system", text: `Enemy takes ${dmg} damage.` });
-          if (draft.run.enemyHP <= 0) { endCombatWin(draft); return; }
-        } else {
-          if (onMiss) onMiss();
+      const { useEffect, useMemo, useRef, useState } = React;
+
+      // =========================================================
+      // DRAGONFALL: MOUNTAIN EXILE — v0.3
+      // Major upgrade: mode-based game screens, mountain map, region scaling,
+      // safe rests, monster ecology by depth, materials->beacon upgrades.
+      // =========================================================
+      const VERSION = "0.3.0";
+      const SAVE_KEY = "dragonfall_save_v03";
+
+      function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+      function uid() { return Math.random().toString(16).slice(2) + Date.now().toString(16); }
+
+      // Deterministic RNG (mulberry32)
+      function mulberry32(seed) {
+        let a = seed >>> 0;
+        return function () {
+          a |= 0; a = (a + 0x6d2b79f5) | 0;
+          let t = Math.imul(a ^ (a >>> 15), 1 | a);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      function rollDie(rng, sides) { return 1 + Math.floor(rng() * sides); }
+      function fmtBonus(b) { if (b === 0) return "+0"; return b > 0 ? `+${b}` : `${b}`; }
+
+      const DR = { easy: 10, standard: 13, hard: 16, extreme: 19 };
+
+      // --- Build system (weapon/style + promotions) ---
+      const WEAPONS = [
+        {
+          key: "sword",
+          name: "Sword",
+          tagline: "Close combat • control • endurance",
+          bias: { might: 1, finesse: 1, wits: 0, will: 0 },
+          styles: [
+            { key: "guard", name: "Guard", desc: "Defense, counters, zone control." },
+            { key: "edge", name: "Edge", desc: "Precision, crits, bleed." },
+            { key: "fury", name: "Fury", desc: "Momentum, risk, finishing." },
+          ],
+        },
+        {
+          key: "bow",
+          name: "Bow",
+          tagline: "Range • positioning • tempo",
+          bias: { might: 0, finesse: 2, wits: 1, will: 0 },
+          styles: [
+            { key: "sniper", name: "Sniper", desc: "Single-target lethality." },
+            { key: "skirmisher", name: "Skirmisher", desc: "Mobility, rapid shots." },
+            { key: "trapper", name: "Trapper", desc: "Terrain control, prep." },
+          ],
+        },
+        {
+          key: "wand",
+          name: "Wand",
+          tagline: "Channeling • volatility • rituals",
+          bias: { might: 0, finesse: 0, wits: 1, will: 2 },
+          styles: [
+            { key: "invoker", name: "Invoker", desc: "Raw spellcasting." },
+            { key: "binder", name: "Binder", desc: "Debuffs, wards, control." },
+            { key: "channeler", name: "Channeler", desc: "Sustained power, scaling." },
+          ],
+        },
+      ];
+
+      const ELEMENTS = [
+        { key: "fire", name: "Fire", vibe: "Escalation • burning risk" },
+        { key: "ice", name: "Ice", vibe: "Control • delay • precision" },
+        { key: "storm", name: "Storm", vibe: "Speed • chaining chaos" },
+        { key: "earth", name: "Earth", vibe: "Endurance • retaliation" },
+        { key: "void", name: "Void", vibe: "Sacrifice • inversion" },
+      ];
+
+      function computeStats(base, weaponBias, styleKey, elementKey, crossKey) {
+        const s = { ...base };
+        for (const k of Object.keys(weaponBias)) s[k] += weaponBias[k];
+
+        if (styleKey) {
+          const map = {
+            guard: { might: 1 }, edge: { finesse: 1 }, fury: { might: 1 },
+            sniper: { finesse: 1, wits: 1 }, skirmisher: { finesse: 1 }, trapper: { wits: 2 },
+            invoker: { wits: 1, will: 1 }, binder: { wits: 1, will: 1 }, channeler: { will: 2 },
+          };
+          const add = map[styleKey] || {};
+          for (const k of Object.keys(add)) s[k] = (s[k] || 0) + add[k];
         }
-        if (draft.phase !== "dead") enemyTurn(draft, "combat");
+
+        if (elementKey) {
+          const map = {
+            fire: { might: 1 }, ice: { finesse: 1 }, storm: { will: 1 }, earth: { might: 1 }, void: { will: 1 },
+          };
+          const add = map[elementKey] || {};
+          for (const k of Object.keys(add)) s[k] = (s[k] || 0) + add[k];
+        }
+
+        // Cross-training = flexibility, less raw
+        if (crossKey) { s.wits += 1; s.finesse += 1; s.might -= 1; }
+
+        s.might = clamp(s.might || 0, -1, 6);
+        s.finesse = clamp(s.finesse || 0, -1, 6);
+        s.wits = clamp(s.wits || 0, -1, 6);
+        s.will = clamp(s.will || 0, -1, 6);
+        return s;
+      }
+
+      function titleFromBuild(weaponKey, styleKey, elementKey, crossStyle) {
+        const weapon = WEAPONS.find((w) => w.key === weaponKey)?.name || "";
+        const style = WEAPONS.flatMap((w) => w.styles).find((s) => s.key === styleKey)?.name || "";
+        const el = ELEMENTS.find((e) => e.key === elementKey)?.name || "";
+
+        if (!weaponKey) return "Unbound";
+        if (!styleKey) return weapon;
+
+        if (crossStyle) {
+          const crossName = WEAPONS.flatMap((w) => w.styles).find((s) => s.key === crossStyle)?.name || "Cross";
+          return `${weapon} ${style} • ${crossName}`;
+        }
+
+        if (elementKey) {
+          const suffixMap = {
+            Guard: "Sentinel", Edge: "Duelist", Fury: "Reaver",
+            Sniper: "Marksman", Skirmisher: "Rover", Trapper: "Warden",
+            Invoker: "Invoker", Binder: "Binder", Channeler: "Channeler",
+          };
+          return `${el}${weapon} ${suffixMap[style] || "Adept"}`;
+        }
+
+        return `${weapon} ${style}`;
+      }
+
+      // --- Skills (combat buttons) ---
+      function skillListForBuild(weaponKey, styleKey, elementKey, crossStyle) {
+        const base = [];
+        const attackLabel = weaponKey === "bow" ? "Shoot" : weaponKey === "wand" ? "Cast" : "Strike";
+        base.push({ key: "attack", name: attackLabel, kind: "action", desc: "Roll to hit. On success, deal damage." });
+        base.push({ key: "defend", name: "Brace", kind: "action", desc: "Raise defense this round. Reduce damage on hit." });
+        base.push({ key: "maneuver", name: "Maneuver", kind: "action", desc: "Reposition to set up advantage." });
+
+        const specials = {
+          guard: { key: "riposte", name: "Shield-Check", desc: "A controlled shove. Safe, reliable." },
+          edge: { key: "bleed", name: "Open Vein", desc: "Higher damage; risk a bite-back." },
+          fury: { key: "lunge", name: "Lunge", desc: "Big swing; missing hurts." },
+          sniper: { key: "aim", name: "Aim", desc: "Take a breath; next shot hits harder." },
+          skirmisher: { key: "dash", name: "Dash Shot", desc: "Attack and slip away on success." },
+          trapper: { key: "snare", name: "Snare", desc: "Hinder the next enemy attack." },
+          invoker: { key: "bolt", name: "Arc Bolt", desc: "High variance magic strike." },
+          binder: { key: "hex", name: "Hex", desc: "Weaken defenses, then hit." },
+          channeler: { key: "focus", name: "Focus", desc: "Charge power; next roll +2." },
+        };
+        if (styleKey && specials[styleKey]) base.push({ ...specials[styleKey], kind: "action" });
+
+        const elementPassives = {
+          fire: "Fire: crits scorch (+1).",
+          ice: "Ice: maneuvers slow (enemy −1 next roll).",
+          storm: "Storm: once per scene, reroll a d20.",
+          earth: "Earth: Brace reduces +1 extra damage.",
+          void: "Void: when low HP, +1 to Will rolls.",
+        };
+        if (elementKey) base.push({ key: `passive_${elementKey}`, name: "Affinity", kind: "passive", desc: elementPassives[elementKey] });
+
+        if (crossStyle) {
+          const crossName = WEAPONS.flatMap((w) => w.styles).find((s) => s.key === crossStyle)?.name || "Cross";
+          base.push({ key: "cross", name: "Cross-Training", kind: "passive", desc: `You carry a slice of ${crossName}.` });
+        }
+        return base;
+      }
+
+      // --- Combat math ---
+      function rollCheck(rng, label, statBonus, dr) {
+        const d20 = rollDie(rng, 20);
+        const total = d20 + statBonus;
+        return { label, d20, statBonus, total, dr, success: total >= dr };
+      }
+      function rollDamage(rng, min, max) { return min + Math.floor(rng() * (max - min + 1)); }
+
+      function computeAttackMod(stats, weaponKey) {
+        if (weaponKey === "sword") return stats.might + Math.floor(stats.finesse / 2);
+        if (weaponKey === "bow") return stats.finesse + Math.floor(stats.wits / 2);
+        if (weaponKey === "wand") return stats.will + Math.floor(stats.wits / 2);
+        return 0;
+      }
+      function computeDefenseMod(stats, styleKey) {
+        let mod = Math.floor((stats.might + stats.will) / 2);
+        if (styleKey === "guard") mod += 1;
+        if (styleKey === "trapper") mod += 1;
+        if (styleKey === "binder") mod += 1;
+        return mod;
+      }
+
+      // --- Materials (loot with meaning) ---
+      const MATERIALS = [
+        { key: "scaled_fragment", name: "Scaled Fragment", tier: 1, desc: "Warm to the touch. It remembers fire." },
+        { key: "bright_glass", name: "Bright Glass", tier: 1, desc: "A shard that catches moonlight like a blade." },
+        { key: "ward_coil", name: "Ward Coil", tier: 2, desc: "Copper thread humming with old equations." },
+        { key: "beacon_ink", name: "Beacon Ink", tier: 1, desc: "Ink that stains even stone. Used for sigils." },
+        { key: "relay_parts", name: "Relay Parts", tier: 2, desc: "A cracked lens and a broken core. Still useful." },
+        { key: "void_chit", name: "Void Chit", tier: 3, desc: "A token that should not exist. It does anyway." },
+      ];
+      function mat(key) { return MATERIALS.find(m => m.key === key); }
+
+      // --- Monster ecology (outer->inner scaling) ---
+      const ENEMIES = [
+        // OUTER (tier 1)
+        { key: "ashwolf", tier: 1, name: "Ash-Wolf", hp: 10, dr: 12, attackDR: 12, dmg: [2, 4],
+          desc: "Grey fur dusted in ember. It circles like a hungry thought." },
+        { key: "wyrmling", tier: 1, name: "Wyrmling Scout", hp: 9, dr: 12, attackDR: 13, dmg: [1, 4],
+          desc: "A juvenile dragonkin with a barbed spear and too much confidence." },
+        { key: "cliff_ghoul", tier: 1, name: "Cliff Ghoul", hp: 8, dr: 11, attackDR: 12, dmg: [1, 3],
+          desc: "It crawls on rock like a bad memory refusing burial." },
+
+        // MID (tier 2)
+        { key: "cultist", tier: 2, name: "Scalebound Cultist", hp: 12, dr: 13, attackDR: 14, dmg: [2, 5],
+          desc: "Eyes like candles. The air around them tastes of coin and smoke." },
+        { key: "drake_rider", tier: 2, name: "Drake-Rider", hp: 13, dr: 14, attackDR: 14, dmg: [2, 6],
+          desc: "A rider and beast moving as one—trained cruelty, practiced speed." },
+        { key: "ember_knight", tier: 2, name: "Ember Knight", hp: 14, dr: 14, attackDR: 15, dmg: [3, 6],
+          desc: "Armor scorched shut. Something still wears it from within." },
+
+        // INNER (tier 3)
+        { key: "void_maw", tier: 3, name: "Void Maw", hp: 16, dr: 15, attackDR: 16, dmg: [3, 7],
+          desc: "A mouth where light goes to die. It speaks without words." },
+        { key: "wyrm_champion", tier: 3, name: "Wyrm Champion", hp: 18, dr: 16, attackDR: 16, dmg: [4, 8],
+          desc: "A crowned brute of scale and oath—its breath is law." },
+        { key: "spire_seraph", tier: 3, name: "Spire Seraph", hp: 17, dr: 16, attackDR: 17, dmg: [3, 9],
+          desc: "Wings of glass. Halo of wire. Mercy absent." },
+      ];
+
+      // --- The mountain map (named places + adjacency, difficulty inward) ---
+      // Tier: 1 outer, 2 mid, 3 inner
+      // Kind: safe | wild | ruin | beacon | pass | shrine
+      const LOCATIONS = [
+        // OUTER RING (tier 1)
+        { id: "l_beacon_gate", tier: 1, kind: "beacon", name: "Beacon Gate", x: 14, y: 78,
+          lore: "The last light before the climb. The Beacon watches, patient as a judge." },
+        { id: "l_ashway_bridge", tier: 1, kind: "pass", name: "Ashway Bridge", x: 26, y: 70,
+          lore: "Black water churns beneath a cracked span. Wind howls through broken stone ribs." },
+        { id: "l_moss_hollow", tier: 1, kind: "safe", name: "Moss Hollow", x: 18, y: 62,
+          lore: "A shallow vale where green still dares to exist. The air tastes less sharp." },
+        { id: "l_saltcut_trail", tier: 1, kind: "wild", name: "Saltcut Trail", x: 33, y: 60,
+          lore: "A narrow path etched by old caravans. Salt crunches underfoot like teeth." },
+        { id: "l_ruined_relay", tier: 1, kind: "ruin", name: "Ruined Relay", x: 40, y: 76,
+          lore: "A collapsed outpost with a dormant crystal core. Someone died here recently." },
+
+        // MID RING (tier 2)
+        { id: "l_cinder_market", tier: 2, kind: "safe", name: "Cinder Market", x: 45, y: 52,
+          lore: "Canvas tents. Whispered prices. A place where desperate people pretend they are fine." },
+        { id: "l_wyrm_path", tier: 2, kind: "wild", name: "Wyrm Path", x: 56, y: 62,
+          lore: "Claw marks score the rock. Heat breathes from the cracks like a sleeping furnace." },
+        { id: "l_sigil_shrine", tier: 2, kind: "shrine", name: "Sigil Shrine", x: 58, y: 44,
+          lore: "A ring of stone inscribed with rules the mountain refuses to obey." },
+        { id: "l_broken_sprawl", tier: 2, kind: "ruin", name: "Broken Sprawl", x: 38, y: 40,
+          lore: "A city’s ribs. Streets like scars. You hear the old noise if you stand still." },
+
+        // INNER RING (tier 3)
+        { id: "l_glass_valley", tier: 3, kind: "wild", name: "Glass Valley", x: 64, y: 32,
+          lore: "The ground is glittering shards. Every step sounds like confession." },
+        { id: "l_spire_pass", tier: 3, kind: "pass", name: "Spire Pass", x: 72, y: 44,
+          lore: "The wind is louder here. It speaks in clipped syllables—like commands." },
+        { id: "l_void_seam", tier: 3, kind: "ruin", name: "Void Seam", x: 80, y: 30,
+          lore: "A tear in the world stitched shut with bad faith. It leaks cold geometry." },
+        { id: "l_peak_crown", tier: 3, kind: "shrine", name: "The Crown Peak", x: 84, y: 18,
+          lore: "A summit like an altar. The sky feels closer. The mountain feels alive." },
+      ];
+
+      const CONNECTIONS = [
+        // Outer
+        ["l_beacon_gate","l_moss_hollow"],
+        ["l_beacon_gate","l_ashway_bridge"],
+        ["l_moss_hollow","l_saltcut_trail"],
+        ["l_ashway_bridge","l_saltcut_trail"],
+        ["l_ashway_bridge","l_ruined_relay"],
+        ["l_saltcut_trail","l_ruined_relay"],
+
+        // Outer -> Mid
+        ["l_saltcut_trail","l_cinder_market"],
+        ["l_ruined_relay","l_wyrm_path"],
+        ["l_cinder_market","l_broken_sprawl"],
+
+        // Mid
+        ["l_cinder_market","l_sigil_shrine"],
+        ["l_broken_sprawl","l_sigil_shrine"],
+        ["l_wyrm_path","l_sigil_shrine"],
+
+        // Mid -> Inner
+        ["l_sigil_shrine","l_glass_valley"],
+        ["l_sigil_shrine","l_spire_pass"],
+        ["l_glass_valley","l_void_seam"],
+        ["l_spire_pass","l_void_seam"],
+        ["l_spire_pass","l_peak_crown"],
+        ["l_void_seam","l_peak_crown"],
+      ];
+
+      function locById(id) { return LOCATIONS.find(l => l.id === id) || null; }
+      function neighborsOf(id) {
+        const set = new Set();
+        for (const [a,b] of CONNECTIONS) {
+          if (a === id) set.add(b);
+          if (b === id) set.add(a);
+        }
+        return [...set];
+      }
+
+      function isSafeLocation(location, builtBeacons) {
+        if (!location) return false;
+        if (location.kind === "safe" || location.kind === "beacon") return true;
+        // built beacons can “make a place safe”
+        return builtBeacons.includes(location.id);
+      }
+
+      // Region names by tier (flavor + difficulty hint)
+      const REGION_NAME = {
+        1: "Outer Slopes",
+        2: "Cinder Valleys",
+        3: "Inner Spires",
       };
 
-      if (key === "attack") { doAttack("You attack", 0, 1, 3); return draft; }
-
-      if (key === "defend") {
-        draft.run._defendActive = true;
-        pushLog(draft, { type: "system", text: `You Brace (Defense mod ${fmtBonus(defMod)}).` });
-        enemyTurn(draft, "brace");
-        return draft;
+      function pickEnemyByTier(rng, tier) {
+        const pool = ENEMIES.filter(e => e.tier === tier);
+        return pool[Math.floor(rng() * pool.length)];
       }
 
-      if (key === "maneuver") {
-        const check = rollCheck(localRng, "You Maneuver", draft.player.stats.wits + draft.player.stats.finesse, DR.standard);
-        pushLog(draft, { type: "roll", text: `${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
-        if (check.success) pushLog(draft, { type: "system", text: "You gain Advantage (preview effect flavor-only for now)." });
-        else takeDamage(draft, 1, "misstep");
-        if (draft.phase !== "dead") enemyTurn(draft, "counter");
-        return draft;
-      }
-
-      // Style specials
-      if (key === "aim") { pushLog(draft, { type: "system", text: "You Aim. (Preview: +2 baked into this shot.)" }); doAttack("Aimed Shot", 2, 1, 4); return draft; }
-      if (key === "dash") {
-        const check = rollCheck(localRng, "Dash Shot", atkMod + 1, enemy.dr);
-        pushLog(draft, { type: "roll", text: `${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
-        if (check.success) {
-          const dmg = rollDamage(localRng, 1, 3);
-          draft.run.enemyHP = Math.max(0, draft.run.enemyHP - dmg);
-          pushLog(draft, { type: "system", text: `Enemy takes ${dmg} damage.` });
-          if (draft.run.enemyHP <= 0) { endCombatWin(draft); return draft; }
-          pushLog(draft, { type: "system", text: "You slip out of reach. No retaliation." });
-          return draft;
+      function pickMaterialDrop(rng, tier) {
+        // drops skew upward with tier
+        const pool = MATERIALS.filter(m => m.tier <= tier + 0); // tier1->1, tier2-><=2, tier3-><=3
+        const weighted = [];
+        for (const m of pool) {
+          const w = 1 + (m.tier === tier ? 2 : 0);
+          for (let i=0;i<w;i++) weighted.push(m);
         }
-        enemyTurn(draft, "dash-fail");
-        return draft;
-      }
-      if (key === "snare") { pushLog(draft, { type: "system", text: "You set a Snare. Enemy Attack DR +2 once." }); const old = enemy.attackDR; enemy.attackDR = old + 2; enemyTurn(draft, "snare"); enemy.attackDR = old; return draft; }
-      if (key === "bolt") { doAttack("Arc Bolt", 1, 1, 5); return draft; }
-      if (key === "hex") { const old = enemy.dr; enemy.dr = Math.max(8, enemy.dr - 2); pushLog(draft, { type: "system", text: "Hex: Enemy DR −2 this turn." }); doAttack("Hexed Strike", 0, 1, 2); enemy.dr = old; return draft; }
-      if (key === "focus") { pushLog(draft, { type: "system", text: "You Focus. (Preview: +2 baked into next cast.)" }); doAttack("Focused Cast", 2, 1, 4); return draft; }
-      if (key === "riposte") { doAttack("Shield-Check", 0, 1, 2); return draft; }
-      if (key === "bleed") { doAttack("Open Vein", 0, 2, 4, () => takeDamage(draft, 1, "overextension")); return draft; }
-      if (key === "lunge") { doAttack("Lunge", 1, 2, 5, () => takeDamage(draft, 2, "exposed")); return draft; }
-
-      return draft;
-    });
-  };
-
-  // --- Travel (adjacent named places) ---------------------------------------
-
-  const travelTo = (toId) => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.phase !== "play") return prev;
-      if (draft.run.inCombat) { pushLog(draft, { type: "system", text: "You cannot travel during combat." }); return draft; }
-
-      const from = MAP_LOCATIONS.find(x => x.id === draft.run.currentLocationId) || MAP_LOCATIONS[0];
-      const to = MAP_LOCATIONS.find(x => x.id === toId);
-      if (!to) return prev;
-
-      const adjacent = (from.links || []).includes(toId) && (to.links || []).includes(from.id);
-      if (!adjacent) { pushLog(draft, { type: "system", text: "That route is not adjacent." }); return draft; }
-
-      draft.run.currentLocationId = toId;
-      draft.run.depth += 1;
-      draft.run.discovered[toId] = true;
-
-      pushLog(draft, { type: "story", text: `You travel to: ${to.name}.` });
-      pushLog(draft, { type: "story", text: to.tone });
-
-      // Station hint
-      if (to.kind === "station") {
-        pushLog(draft, { type: "system", text: "A dormant relay sits here. If you build a beacon, this place becomes safe." });
+        return weighted[Math.floor(rng() * weighted.length)];
       }
 
-      // Start encounter if allowed by rules
-      startEncounterIfAllowed(draft, to);
+      // --- Beacon upgrades (Echoes + banked materials) ---
+      const BEACON_UPGRADES = [
+        {
+          key: "start_hp",
+          name: "Stoneheart (+1 Start HP)",
+          desc: "Your body remembers impact. You wake sturdier each exile.",
+          costEchoes: 6,
+          costMats: { scaled_fragment: 2 },
+          apply: (g) => { g.meta.legacy.startHP = (g.meta.legacy.startHP || 0) + 1; },
+        },
+        {
+          key: "map_reveal",
+          name: "Cartographer (+1 Reveal Depth)",
+          desc: "The Beacon shows you more of the mountain at once.",
+          costEchoes: 4,
+          costMats: { bright_glass: 2, beacon_ink: 1 },
+          apply: (g) => { g.meta.legacy.revealHints = (g.meta.legacy.revealHints || 0) + 1; },
+        },
+        {
+          key: "safe_rest",
+          name: "Quiet Ward (Safer Rests)",
+          desc: "Your safe places become truly safe. Healing improves there.",
+          costEchoes: 5,
+          costMats: { ward_coil: 1, beacon_ink: 1 },
+          apply: (g) => { g.meta.legacy.safeRest = (g.meta.legacy.safeRest || 0) + 1; },
+        },
+        {
+          key: "beacon_build",
+          name: "Portable Relay (Build Beacons)",
+          desc: "Carry the Beacon’s logic into the field. Make safety where there was none.",
+          costEchoes: 7,
+          costMats: { relay_parts: 2, ward_coil: 1 },
+          apply: (g) => { g.meta.legacy.canBuildBeacons = true; },
+        },
+        {
+          key: "void_bargain",
+          name: "Void Bargain (Risk)",
+          desc: "Gain power quickly. Pay later. The mountain always collects.",
+          costEchoes: 3,
+          costMats: { void_chit: 1 },
+          apply: (g) => { g.meta.legacy.voidMarks = (g.meta.legacy.voidMarks || 0) + 1; },
+        },
+      ];
 
-      return draft;
-    });
-  };
+      function mkNewGame(seed = Date.now()) {
+        const gameId = uid();
+        const rngSeed = (seed ^ gameId.length) >>> 0;
 
-  // --- Rest / Build Beacon / Extract / Sell ---------------------------------
+        return {
+          version: VERSION,
+          gameId,
+          rngSeed,
 
-  const rest = () => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.phase !== "play") return prev;
-      if (draft.run.inCombat) { pushLog(draft, { type: "system", text: "No rest in combat." }); return draft; }
+          // MODE-BASED UI:
+          // menu | setup_weapon | setup_style | setup_prologue | map | location | combat | beacon | dead
+          mode: "menu",
 
-      const here = MAP_LOCATIONS.find(x => x.id === draft.run.currentLocationId) || MAP_LOCATIONS[0];
-      const isBeacon = !!draft.player.stationBuiltAt?.[here.id];
-      const isSafe = here.kind === "safe" || isBeacon;
+          meta: {
+            echoes: 0,
+            bank: { // banked materials (extracted)
+              scaled_fragment: 0,
+              bright_glass: 0,
+              ward_coil: 0,
+              beacon_ink: 0,
+              relay_parts: 0,
+              void_chit: 0,
+            },
+            legacy: {
+              startHP: 0,
+              revealHints: 0,
+              safeRest: 0,
+              canBuildBeacons: false,
+              voidMarks: 0,
+            }
+          },
 
-      const heal = isSafe ? 3 : 2;
-      draft.player.hp = clamp(draft.player.hp + heal, 0, draft.player.hpMax);
-      pushLog(draft, { type: "system", text: `You rest (+${heal} HP).` });
+          player: {
+            name: "",
+            weapon: null,
+            style: null,
+            element: null,
+            crossStyle: null,
+            baseStats: { might: 0, finesse: 0, wits: 0, will: 0 },
+            stats: { might: 0, finesse: 0, wits: 0, will: 0 },
+            hpMax: 10,
+            hp: 10,
+            xp: 0,
+            promoTier: 0,   // 0 = before specialization; 1 = element/cross chosen
+            nextPromoAt: 4,
+            title: "Unbound",
 
-      if (isSafe) {
-        pushLog(draft, { type: "story", text: "No monsters here. The ward-light holds." });
-      } else {
-        // unsafe rest risk (preview)
-        const localRng = mulberry32(draft.rngSeed ^ draft.run.depth ^ here.level ^ 0xAAAA ^ Date.now());
-        if (localRng() < 0.45 && here.kind === "danger" && !draft.run.cleared?.[here.id]) {
-          pushLog(draft, { type: "story", text: "You close your eyes. Something moves in the dark." });
-          startEncounterIfAllowed(draft, here);
-        } else {
-          pushLog(draft, { type: "story", text: "The wind passes. No footsteps." });
-        }
+            // run materials (unbanked)
+            pack: {
+              scaled_fragment: 0,
+              bright_glass: 0,
+              ward_coil: 0,
+              beacon_ink: 0,
+              relay_parts: 0,
+              void_chit: 0,
+            },
+
+            // in-run safety
+            builtBeacons: [], // location ids that are now safe
+          },
+
+          run: {
+            day: 1,
+            region: "Ember March",
+            revealedTier: 1, // map visibility
+            here: "l_beacon_gate",
+            lastHere: null,
+
+            // combat state
+            inCombat: false,
+            enemy: null,
+            enemyHP: 0,
+
+            // small, whisper log
+            log: [],
+          },
+
+          ui: {
+            toast: null,
+            showPromotion: false,
+            mapPan: { x: 0, y: 0, z: 1 }, // simple map zoom
+          }
+        };
       }
-      return draft;
-    });
-  };
 
-  const buildBeacon = () => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.phase !== "play") return prev;
-      if (draft.run.inCombat) { pushLog(draft, { type: "system", text: "You cannot build during combat." }); return draft; }
-
-      const here = MAP_LOCATIONS.find(x => x.id === draft.run.currentLocationId) || MAP_LOCATIONS[0];
-
-      // Require Relay Parts in carried inventory
-      const idx = draft.player.inventory.findIndex(it => it.key === "relay_parts");
-      if (idx === -1) { pushLog(draft, { type: "system", text: "You lack Relay Parts to build a Beacon." }); return draft; }
-
-      draft.player.inventory.splice(idx, 1);
-      draft.player.stationBuiltAt = draft.player.stationBuiltAt || {};
-      draft.player.stationBuiltAt[here.id] = true;
-
-      // Once beacon exists, this location becomes safe (no more monsters here)
-      draft.run.inCombat = false;
-      draft.run.enemy = null;
-      draft.run.enemyHP = 0;
-
-      pushLog(draft, { type: "story", text: "You assemble a crude Beacon. A ward flickers to life… then steadies." });
-      pushLog(draft, { type: "system", text: "This place is now SAFE. You can rest and extract without monster risk." });
-      return draft;
-    });
-  };
-
-  const extract = () => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.phase !== "play") return prev;
-      if (draft.run.inCombat) { pushLog(draft, { type: "system", text: "Extracting during combat is a good way to die." }); return draft; }
-
-      const here = MAP_LOCATIONS.find(x => x.id === draft.run.currentLocationId) || MAP_LOCATIONS[0];
-      const isBeacon = !!draft.player.stationBuiltAt?.[here.id];
-      const isSafe = here.kind === "safe" || isBeacon || here.kind === "station";
-
-      if (!isSafe) { pushLog(draft, { type: "system", text: "No secure station here. Build a Beacon or find a Relay/Safe place." }); return draft; }
-
-      const items = draft.player.inventory.splice(0);
-      draft.player.extracted.push(...items);
-
-      pushLog(draft, { type: "system", text: `Extraction complete. Saved ${items.length} item(s).` });
-      if (items.length) {
-        pushLog(draft, { type: "system", text: `Extracted value: ${sumLootValue(items)} (sellable at safe places).` });
+      function pushLog(state, entry) {
+        const line = { id: uid(), t: Date.now(), ...entry };
+        state.run.log = [line, ...state.run.log].slice(0, 18); // keep small, recent
       }
-      return draft;
-    });
-  };
 
-  const sellExtracted = () => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.phase !== "play") return prev;
-      if (draft.run.inCombat) return prev;
+      function recalcPlayer(draft) {
+        const w = WEAPONS.find((x) => x.key === draft.player.weapon);
+        const bias = w?.bias || { might: 0, finesse: 0, wits: 0, will: 0 };
+        draft.player.stats = computeStats(
+          draft.player.baseStats,
+          bias,
+          draft.player.style,
+          draft.player.element,
+          draft.player.crossStyle
+        );
+        const hpBase = 10 + (draft.meta.legacy.startHP || 0);
+        draft.player.hpMax = hpBase;
+        draft.player.hp = clamp(draft.player.hp, 0, hpBase);
+        draft.player.title = titleFromBuild(draft.player.weapon, draft.player.style, draft.player.element, draft.player.crossStyle);
+      }
 
-      const here = MAP_LOCATIONS.find(x => x.id === draft.run.currentLocationId) || MAP_LOCATIONS[0];
-      const isBeacon = !!draft.player.stationBuiltAt?.[here.id];
-      const isSafe = here.kind === "safe" || isBeacon;
+      // --- UI atoms (gamey, not admin) ---
+      function Pill({ children }) {
+        return (
+          <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs bg-white/10 border border-white/10">
+            {children}
+          </span>
+        );
+      }
+      function Button({ children, onClick, variant = "primary", disabled, title }) {
+        const base = "rounded-2xl px-4 py-2 text-sm font-semibold border transition active:scale-[0.99] tracking-wide";
+        const styles = {
+          primary: "bg-white text-black border-white/20 hover:bg-white/90 disabled:opacity-50",
+          ghost: "bg-white/5 text-white border-white/10 hover:bg-white/10 disabled:opacity-50",
+          danger: "bg-red-500/15 text-red-200 border-red-500/30 hover:bg-red-500/20 disabled:opacity-50",
+          gold: "bg-amber-300/15 text-amber-100 border-amber-300/25 hover:bg-amber-300/20 disabled:opacity-50",
+        };
+        return (
+          <button className={`${base} ${styles[variant]}`} onClick={onClick} disabled={disabled} title={title}>
+            {children}
+          </button>
+        );
+      }
+      function Divider() { return <div className="h-px bg-white/10 my-3" />; }
 
-      if (!isSafe) { pushLog(draft, { type: "system", text: "No market here. Sell only at SAFE places (or your Beacon)." }); return draft; }
-
-      const value = sumLootValue(draft.player.extracted);
-      if (value <= 0) { pushLog(draft, { type: "system", text: "Nothing extracted to sell." }); return draft; }
-
-      draft.player.gold += value;
-      draft.player.extracted = [];
-      pushLog(draft, { type: "system", text: `Sold extracted salvage for ${value} gold.` });
-      return draft;
-    });
-  };
-
-  // --- Promotion -------------------------------------------------------------
-
-  const revealClass = (draft) => {
-    draft.ui.showClassReveal = true;
-    draft.ui.classRevealText = `You are now known as: ${draft.player.title}.`;
-    pushLog(draft, { type: "story", text: `✦ ${draft.ui.classRevealText}` });
-  };
-
-  const choosePromotionElement = (elementKey) => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      draft.player.element = elementKey;
-      draft.player.crossStyle = null;
-      draft.player.promoTier = 1;
-      draft.ui.showPromotion = false;
-      recalcPlayer(draft);
-      pushLog(draft, { type: "system", text: `Promotion: Affinity ${elementKey.toUpperCase()}.` });
-      revealClass(draft);
-      return draft;
-    });
-  };
-
-  const choosePromotionCross = (crossStyleKey) => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      draft.player.crossStyle = crossStyleKey;
-      draft.player.element = null;
-      draft.player.promoTier = 1;
-      draft.ui.showPromotion = false;
-      recalcPlayer(draft);
-      pushLog(draft, { type: "system", text: `Promotion: Cross-Training ${crossStyleKey.toUpperCase()}.` });
-      revealClass(draft);
-      return draft;
-    });
-  };
-
-  // --- Death / Meta ----------------------------------------------------------
-
-  const reviveToStart = () => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.phase !== "dead") return draft;
-      const next = mkNewGame(Date.now());
-      next.meta = draft.meta;
-      next.player.hpMax = 10 + (next.meta.legacy.startHP || 0);
-      next.player.hp = next.player.hpMax;
-      pushLog(next, { type: "system", text: "You wake at the Beacon. The mountain waits." });
-      return next;
-    });
-  };
-
-  const metaSpend = (key, cost, apply) => {
-    setState((prev) => {
-      const draft = structuredClone(prev);
-      if (draft.meta.echoes < cost) { pushLog(draft, { type: "system", text: "Not enough Echoes." }); return draft; }
-      draft.meta.echoes -= cost;
-      apply(draft);
-      pushLog(draft, { type: "system", text: `Beacon upgraded: ${key}.` });
-      return draft;
-    });
-  };
-
-  // --- Derived UI values -----------------------------------------------------
-
-  const adjacentLocations = useMemo(() => {
-    const from = MAP_LOCATIONS.find(x => x.id === state.run.currentLocationId) || MAP_LOCATIONS[0];
-    const ids = from.links || [];
-    return ids.map(id => MAP_LOCATIONS.find(x => x.id === id)).filter(Boolean);
-  }, [state.run.currentLocationId]);
-
-  const canExtractHere = useMemo(() => {
-    if (state.phase !== "play") return false;
-    const here = MAP_LOCATIONS.find(x => x.id === state.run.currentLocationId) || MAP_LOCATIONS[0];
-    const isBeacon = !!state.player.stationBuiltAt?.[here.id];
-    return here.kind === "safe" || here.kind === "station" || isBeacon;
-  }, [state.phase, state.run.currentLocationId, state.player.stationBuiltAt]);
-
-  // --- Render ----------------------------------------------------------------
-
-  return (
-    <div className="min-h-screen bg-[radial-gradient(80%_60%_at_50%_0%,rgba(124,58,237,0.28),rgba(0,0,0,0)),radial-gradient(70%_60%_at_20%_20%,rgba(14,165,233,0.18),rgba(0,0,0,0)),linear-gradient(to_bottom,rgba(0,0,0,1),rgba(9,9,11,1))] text-white">
-      <div className="max-w-6xl mx-auto p-4 md:p-6">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div>
-            <div className="text-sm text-white/60">DRAGONFALL • Mountain Exile • v{VERSION}</div>
-            <div className="text-3xl md:text-4xl font-semibold tracking-tight">Arcane Run Preview</div>
-            <div className="text-white/70 mt-1">map travel • adjacency routes • area-tier monsters • XP promotions • salvage economy</div>
+      function WhisperLog({ lines }) {
+        // Semi-transparent small ribbon (newest last visually)
+        const shown = [...lines].slice(0, 6).reverse();
+        return (
+          <div className="pointer-events-none absolute bottom-4 left-4 w-[min(520px,calc(100%-2rem))]">
+            <div className="rounded-2xl bg-black/35 border border-white/10 backdrop-blur-md px-3 py-2">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-white/60">Whispers</div>
+              <div className="mt-2 space-y-1">
+                {shown.length === 0 ? (
+                  <div className="text-xs text-white/50">…</div>
+                ) : shown.map((l) => (
+                  <div key={l.id} className="text-xs text-white/85 leading-snug">
+                    <span className={
+                      l.type === "roll" ? "text-amber-200" :
+                      l.type === "system" ? "text-white/80" :
+                      l.type === "lore" ? "text-indigo-200" :
+                      l.type === "danger" ? "text-red-200" :
+                      "text-white/85"
+                    }>
+                      {l.text}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={saveGame} variant="ghost">Save</Button>
-            <Button onClick={loadGame} variant="ghost">Load</Button>
-            <Button onClick={clearSave} variant="ghost">Clear Save</Button>
-            <Button onClick={hardReset} variant="danger">New Run</Button>
-          </div>
-        </div>
+        );
+      }
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mt-5">
-          <div className="lg:col-span-8 flex flex-col gap-4">
-            <Card
-              title={`Chapter ${state.book.chapter} • Page ${state.book.page}`}
-              subtitle={state.phase === "dead" ? "☠️ Fallen" : state.phase === "play" ? "In the Mountain" : "Preparation"}
-              right={
-                <div className="flex gap-2 flex-wrap justify-end">
+      // --- Backgrounds by mode (simple, effective) ---
+      function Background({ mode }) {
+        const base = "absolute inset-0";
+        const menu = "bg-[radial-gradient(90%_70%_at_50%_0%,rgba(124,58,237,0.26),rgba(0,0,0,0)),radial-gradient(70%_60%_at_20%_20%,rgba(14,165,233,0.16),rgba(0,0,0,0)),linear-gradient(to_bottom,rgba(0,0,0,1),rgba(9,9,11,1))]";
+        const map = "bg-[radial-gradient(70%_60%_at_50%_20%,rgba(34,197,94,0.08),rgba(0,0,0,0)),radial-gradient(70%_60%_at_70%_10%,rgba(124,58,237,0.18),rgba(0,0,0,0)),linear-gradient(to_bottom,rgba(0,0,0,1),rgba(9,9,11,1))]";
+        const combat = "bg-[radial-gradient(70%_60%_at_40%_30%,rgba(239,68,68,0.18),rgba(0,0,0,0)),radial-gradient(70%_60%_at_70%_20%,rgba(124,58,237,0.16),rgba(0,0,0,0)),linear-gradient(to_bottom,rgba(0,0,0,1),rgba(9,9,11,1))]";
+        const beacon = "bg-[radial-gradient(70%_60%_at_50%_25%,rgba(245,158,11,0.14),rgba(0,0,0,0)),radial-gradient(70%_60%_at_20%_10%,rgba(14,165,233,0.14),rgba(0,0,0,0)),linear-gradient(to_bottom,rgba(0,0,0,1),rgba(9,9,11,1))]";
+
+        const cls =
+          mode === "combat" ? combat :
+          mode === "beacon" ? beacon :
+          mode === "map" ? map :
+          menu;
+
+        return <div className={`${base} ${cls}`} />;
+      }
+
+      function DragonfallMountainExilePreview() {
+        const [state, setState] = useState(() => mkNewGame());
+        const toastTimer = useRef(null);
+
+        const weaponObj = useMemo(() => WEAPONS.find((w) => w.key === state.player.weapon) || null, [state.player.weapon]);
+        const styleObj = useMemo(
+          () => WEAPONS.flatMap((w) => w.styles).find((s) => s.key === state.player.style) || null,
+          [state.player.style]
+        );
+        const elementObj = useMemo(() => ELEMENTS.find((e) => e.key === state.player.element) || null, [state.player.element]);
+
+        const skills = useMemo(
+          () => skillListForBuild(state.player.weapon, state.player.style, state.player.element, state.player.crossStyle),
+          [state.player.weapon, state.player.style, state.player.element, state.player.crossStyle]
+        );
+
+        const here = useMemo(() => locById(state.run.here), [state.run.here]);
+        const hereSafe = useMemo(() => isSafeLocation(here, state.player.builtBeacons), [here, state.player.builtBeacons]);
+
+        const showToast = (msg) => {
+          setState((p) => ({ ...p, ui: { ...p.ui, toast: msg }}));
+          if (toastTimer.current) clearTimeout(toastTimer.current);
+          toastTimer.current = setTimeout(() => {
+            setState((p) => ({ ...p, ui: { ...p.ui, toast: null }}));
+          }, 1900);
+        };
+
+        const saveGame = () => {
+          try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); showToast("Saved."); }
+          catch { showToast("Save failed."); }
+        };
+        const loadGame = () => {
+          try {
+            const raw = localStorage.getItem(SAVE_KEY);
+            if (!raw) return showToast("No save found.");
+            const parsed = JSON.parse(raw);
+            if (!parsed?.version) return showToast("Save invalid.");
+            setState(parsed);
+            showToast("Loaded.");
+          } catch { showToast("Load failed."); }
+        };
+        const clearSave = () => { try { localStorage.removeItem(SAVE_KEY); showToast("Save cleared."); } catch { showToast("Could not clear."); } };
+
+        const hardReset = () => {
+          setState((prev) => {
+            const next = mkNewGame(Date.now());
+            next.meta = prev.meta; // keep meta
+            recalcPlayer(next);
+            pushLog(next, { type: "lore", text: "The Beacon does not judge you. It only counts what you bring back." });
+            return next;
+          });
+          showToast("New exile.");
+        };
+
+        // ---------------------------
+        // STORY + FLOW HELPERS
+        // ---------------------------
+        const goMode = (mode) => setState((p) => ({ ...p, mode }));
+
+        const beginNewExile = () => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            // reset run/player, keep meta
+            const fresh = mkNewGame(Date.now());
+            fresh.meta = d.meta;
+            fresh.mode = "setup_weapon";
+            recalcPlayer(fresh);
+            pushLog(fresh, { type: "lore", text: "Dragons own the sky. Cities endure as beacons. You are sent to the Mountain Expanse to return with proof." });
+            pushLog(fresh, { type: "system", text: "Choose your starting armament." });
+            return fresh;
+          });
+        };
+
+        const chooseWeapon = (weaponKey) => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            d.player.weapon = weaponKey;
+            recalcPlayer(d);
+            d.mode = "setup_style";
+            pushLog(d, { type: "system", text: `Armament chosen: ${weaponKey.toUpperCase()}.` });
+            pushLog(d, { type: "lore", text: "In your hands, the tool becomes a vow." });
+            return d;
+          });
+        };
+
+        const chooseStyle = (styleKey) => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            d.player.style = styleKey;
+            recalcPlayer(d);
+
+            d.mode = "setup_prologue";
+            d.run.here = "l_beacon_gate";
+            d.run.revealedTier = 1 + (d.meta.legacy.revealHints || 0);
+            d.player.promoTier = 0;
+            d.player.xp = 0;
+            d.player.element = null;
+            d.player.crossStyle = null;
+            d.player.builtBeacons = [];
+
+            pushLog(d, { type: "system", text: `Discipline chosen: ${styleKey.toUpperCase()}.` });
+            return d;
+          });
+        };
+
+        const prologueContinue = () => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            d.mode = "map";
+            pushLog(d, { type: "lore", text: `You step into the ${d.run.region}. The mountain draws a slow breath.` });
+            pushLog(d, { type: "system", text: "Open the map. Choose a reachable place." });
+            return d;
+          });
+        };
+
+        const classPrompt = useMemo(() => {
+          if (!state.player.weapon || !state.player.style) return "";
+          const base = `${WEAPONS.find(w => w.key === state.player.weapon)?.name || "Weapon"} ${WEAPONS.flatMap(w => w.styles).find(s => s.key === state.player.style)?.name || "Style"}`;
+          if (state.player.promoTier === 0) return `You are ${base}. Unspecialized. Hungry.`;
+          const spec = state.player.element
+            ? `Bound to ${ELEMENTS.find(e => e.key === state.player.element)?.name || "Element"}.`
+            : state.player.crossStyle
+              ? `Cross-trained in ${WEAPONS.flatMap(w => w.styles).find(s => s.key === state.player.crossStyle)?.name || "Cross"}.`
+              : "";
+          return `${state.player.title}. ${spec}`;
+        }, [state.player.weapon, state.player.style, state.player.promoTier, state.player.element, state.player.crossStyle, state.player.title]);
+
+        // ---------------------------
+        // NAVIGATION + ENCOUNTERS
+        // ---------------------------
+        const canTravelTo = (fromId, toId) => {
+          const adj = neighborsOf(fromId);
+          return adj.includes(toId);
+        };
+
+        const travelTo = (toId) => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            if (d.run.inCombat) return prev;
+
+            const from = d.run.here;
+            if (!canTravelTo(from, toId)) {
+              pushLog(d, { type: "system", text: "That route is not passable from here." });
+              return d;
+            }
+
+            d.run.lastHere = from;
+            d.run.here = toId;
+            d.mode = "location";
+
+            const L = locById(toId);
+            pushLog(d, { type: "lore", text: `⛰️ ${L.name}.` });
+            pushLog(d, { type: "lore", text: L.lore });
+
+            return d;
+          });
+        };
+
+        const rollEncounterIfNeeded = (draft) => {
+          const L = locById(draft.run.here);
+          const safe = isSafeLocation(L, draft.player.builtBeacons);
+
+          // Safe places: no monsters on rest, and generally no forced combat
+          if (safe) {
+            pushLog(draft, { type: "system", text: "The air here is quieter. No footsteps follow." });
+            return;
+          }
+
+          // Hostile places: chance of combat on explore/search
+          const rng = mulberry32(draft.rngSeed ^ draft.run.day ^ (L.tier * 0x9e37) ^ Date.now());
+          const chance = 0.78; // fairly likely to keep gameplay moving
+          if (rng() < chance) {
+            const enemy = pickEnemyByTier(rng, L.tier);
+            draft.run.inCombat = true;
+            draft.run.enemy = { ...enemy };
+            draft.run.enemyHP = enemy.hp;
+            draft.mode = "combat";
+            pushLog(draft, { type: "danger", text: `⚔️ ${enemy.name} emerges. ${enemy.desc}` });
+          } else {
+            pushLog(draft, { type: "lore", text: "Wind. Stone. Your own breath. For once—nothing else." });
+          }
+        };
+
+        const explore = () => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            if (d.mode !== "location") return prev;
+            pushLog(d, { type: "system", text: "You move through the place with careful intent." });
+            rollEncounterIfNeeded(d);
+            return d;
+          });
+        };
+
+        const search = () => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            if (d.mode !== "location") return prev;
+            const L = locById(d.run.here);
+            const safe = isSafeLocation(L, d.player.builtBeacons);
+
+            // In safe places, searching yields small material without combat.
+            const rng = mulberry32(d.rngSeed ^ d.run.day ^ 0xbeef ^ Date.now());
+            const drop = pickMaterialDrop(rng, safe ? 1 : L.tier);
+            d.player.pack[drop.key] += 1;
+            pushLog(d, { type: "system", text: `You salvage: ${drop.name} (+1).` });
+
+            if (!safe) rollEncounterIfNeeded(d);
+            return d;
+          });
+        };
+
+        const rest = () => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            if (d.mode !== "location") return prev;
+
+            const L = locById(d.run.here);
+            const safe = isSafeLocation(L, d.player.builtBeacons);
+
+            const baseHeal = 2;
+            const bonus = safe ? (1 + (d.meta.legacy.safeRest || 0)) : 0;
+            const heal = baseHeal + bonus;
+
+            d.player.hp = clamp(d.player.hp + heal, 0, d.player.hpMax);
+            d.run.day += 1;
+
+            if (safe) {
+              pushLog(d, { type: "system", text: `You rest safely (+${heal} HP). No monsters here.` });
+              // no encounters
+            } else {
+              pushLog(d, { type: "system", text: `You rest in the open (+${heal} HP). The mountain notices.` });
+              // small chance to get jumped (but not guaranteed)
+              const rng = mulberry32(d.rngSeed ^ d.run.day ^ 0x1357 ^ Date.now());
+              if (rng() < 0.35) rollEncounterIfNeeded(d);
+              else pushLog(d, { type: "lore", text: "You wake to cold stone and unanswered silence." });
+            }
+
+            return d;
+          });
+        };
+
+        const buildBeacon = () => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            if (d.mode !== "location") return prev;
+
+            if (!d.meta.legacy.canBuildBeacons) {
+              pushLog(d, { type: "system", text: "You do not yet know how to carry the Beacon into the field." });
+              return d;
+            }
+
+            const L = locById(d.run.here);
+            if (isSafeLocation(L, d.player.builtBeacons)) {
+              pushLog(d, { type: "system", text: "This place is already held by ward-light." });
+              return d;
+            }
+
+            if (d.player.pack.relay_parts < 1 || d.player.pack.ward_coil < 1) {
+              pushLog(d, { type: "system", text: "To build a field beacon, you need: Relay Parts (1) + Ward Coil (1)." });
+              return d;
+            }
+
+            d.player.pack.relay_parts -= 1;
+            d.player.pack.ward_coil -= 1;
+            d.player.builtBeacons.push(L.id);
+            pushLog(d, { type: "lore", text: "You assemble a beacon-limb in the dirt. It flickers—then holds." });
+            pushLog(d, { type: "system", text: `${L.name} is now a safe place.` });
+            return d;
+          });
+        };
+
+        const extractToBank = () => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            if (d.mode !== "location") return prev;
+
+            const L = locById(d.run.here);
+            const safe = isSafeLocation(L, d.player.builtBeacons);
+
+            if (!safe) {
+              pushLog(d, { type: "system", text: "Extraction requires safety: a Beacon, a refuge, or a built ward." });
+              return d;
+            }
+
+            let moved = 0;
+            for (const k of Object.keys(d.player.pack)) {
+              const amt = d.player.pack[k] || 0;
+              if (amt > 0) {
+                d.meta.bank[k] = (d.meta.bank[k] || 0) + amt;
+                d.player.pack[k] = 0;
+                moved += amt;
+              }
+            }
+            pushLog(d, { type: "system", text: `Extraction complete. Banked ${moved} material(s).` });
+            return d;
+          });
+        };
+
+        // ---------------------------
+        // COMBAT
+        // ---------------------------
+        const takeDamage = (draft, amount, reason) => {
+          draft.player.hp = clamp(draft.player.hp - amount, 0, draft.player.hpMax);
+          pushLog(draft, { type: "danger", text: `🩸 You take ${amount} damage (${reason}).` });
+          if (draft.player.hp <= 0) {
+            draft.mode = "dead";
+            const L = locById(draft.run.here);
+            const depthEcho = (L?.tier || 1) + Math.floor(draft.player.xp / 2);
+            const carryPenalty = Object.values(draft.player.pack).reduce((a,b)=>a+b,0);
+            const echoes = Math.max(2, depthEcho) + Math.floor(carryPenalty / 3);
+            draft.meta.echoes += echoes;
+
+            // lose unbanked materials (pack wiped)
+            for (const k of Object.keys(draft.player.pack)) draft.player.pack[k] = 0;
+
+            pushLog(draft, { type: "danger", text: "☠️ You fall. The mountain keeps what you did not extract." });
+            pushLog(draft, { type: "system", text: `At the Beacon, you receive ${echoes} Echoes.` });
+          }
+        };
+
+        const enemyTurn = (draft, context = "combat") => {
+          const enemy = draft.run.enemy;
+          if (!enemy) return;
+
+          const rng = mulberry32(draft.rngSeed ^ draft.run.day ^ 0x1111 ^ draft.run.enemyHP);
+          const defMod = computeDefenseMod(draft.player.stats, draft.player.style);
+          const defendActive = !!draft.run._defendActive;
+          const braceBonus = defendActive ? 2 : 0;
+
+          const check = rollCheck(rng, `${enemy.name} attacks`, defMod + braceBonus, enemy.attackDR);
+          pushLog(draft, { type: "roll", text: `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "HIT" : "MISS"}` });
+
+          if (check.success) {
+            let dmg = rollDamage(rng, enemy.dmg[0], enemy.dmg[1]);
+            if (defendActive) dmg = Math.max(0, dmg - 1 - (draft.player.element === "earth" ? 1 : 0));
+            takeDamage(draft, dmg, context);
+          } else {
+            pushLog(draft, { type: "system", text: "You avoid the blow." });
+          }
+          draft.run._defendActive = false;
+        };
+
+        const endCombatWin = (draft) => {
+          const L = locById(draft.run.here);
+          const rng = mulberry32(draft.rngSeed ^ draft.run.day ^ 0xbeef);
+
+          const drop = pickMaterialDrop(rng, L.tier);
+          draft.player.pack[drop.key] += 1;
+
+          const xpGain = L.tier; // 1/2/3 by region
+          draft.player.xp += xpGain;
+
+          draft.run.inCombat = false;
+          draft.run.enemy = null;
+          draft.run.enemyHP = 0;
+          draft.mode = "location";
+
+          pushLog(draft, { type: "system", text: `Victory. +${xpGain} XP. Salvage gained: ${drop.name} (+1).` });
+
+          // Promotion unlock
+          if (draft.player.promoTier === 0 && draft.player.xp >= draft.player.nextPromoAt) {
+            draft.ui.showPromotion = true;
+            pushLog(draft, { type: "lore", text: "Something in you shifts. A specialization is ready to bind." });
+          }
+        };
+
+        const combatAction = (key) => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            if (d.mode !== "combat" || !d.run.inCombat || !d.run.enemy) return prev;
+
+            const enemy = d.run.enemy;
+            const rng = mulberry32(d.rngSeed ^ d.run.day ^ 0x2222 ^ Date.now());
+
+            const atkMod = computeAttackMod(d.player.stats, d.player.weapon);
+            const defMod = computeDefenseMod(d.player.stats, d.player.style);
+
+            const doAttack = (label, bonus, dmgMin, dmgMax, onMiss) => {
+              const check = rollCheck(rng, label, atkMod + bonus, enemy.dr);
+              pushLog(d, { type: "roll", text: `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
+
+              if (check.success) {
+                let dmg = rollDamage(rng, dmgMin, dmgMax);
+                if (check.d20 === 20) {
+                  dmg += 1;
+                  if (d.player.element === "fire") dmg += 1;
+                  pushLog(d, { type: "system", text: "✦ Critical impact." });
+                }
+                d.run.enemyHP = Math.max(0, d.run.enemyHP - dmg);
+                pushLog(d, { type: "system", text: `Enemy takes ${dmg} damage.` });
+                if (d.run.enemyHP <= 0) { endCombatWin(d); return; }
+              } else {
+                if (onMiss) onMiss();
+              }
+              if (d.mode !== "dead") enemyTurn(d, "combat");
+            };
+
+            if (key === "attack") { doAttack("You attack", 0, 1, 3); return d; }
+
+            if (key === "defend") {
+              d.run._defendActive = true;
+              pushLog(d, { type: "system", text: `You Brace (Defense ${fmtBonus(defMod)}).` });
+              enemyTurn(d, "brace");
+              return d;
+            }
+
+            if (key === "maneuver") {
+              const check = rollCheck(rng, "You Maneuver", d.player.stats.wits + d.player.stats.finesse, DR.standard);
+              pushLog(d, { type: "roll", text: `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
+              if (check.success) pushLog(d, { type: "system", text: "You gain Advantage (preview flavor)." });
+              else takeDamage(d, 1, "misstep");
+              if (d.mode !== "dead") enemyTurn(d, "counter");
+              return d;
+            }
+
+            // Style specials
+            if (key === "aim") { pushLog(d, { type: "system", text: "You Aim. (+2 baked into this shot.)" }); doAttack("Aimed Shot", 2, 1, 4); return d; }
+            if (key === "dash") {
+              const check = rollCheck(rng, "Dash Shot", atkMod + 1, enemy.dr);
+              pushLog(d, { type: "roll", text: `🎲 ${check.label}: d20 ${check.d20} ${fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success ? "SUCCESS" : "FAIL"}` });
+              if (check.success) {
+                const dmg = rollDamage(rng, 1, 3);
+                d.run.enemyHP = Math.max(0, d.run.enemyHP - dmg);
+                pushLog(d, { type: "system", text: `Enemy takes ${dmg} damage.` });
+                if (d.run.enemyHP <= 0) { endCombatWin(d); return d; }
+                pushLog(d, { type: "system", text: "You slip out of reach. No retaliation." });
+                return d;
+              }
+              enemyTurn(d, "dash-fail");
+              return d;
+            }
+            if (key === "snare") { pushLog(d, { type: "system", text: "You set a Snare. Enemy Attack DR +2 once." }); const old = enemy.attackDR; enemy.attackDR = old + 2; enemyTurn(d, "snare"); enemy.attackDR = old; return d; }
+            if (key === "bolt") { doAttack("Arc Bolt", 1, 1, 5); return d; }
+            if (key === "hex") { const old = enemy.dr; enemy.dr = Math.max(8, enemy.dr - 2); pushLog(d, { type: "system", text: "Hex: Enemy DR −2 this turn." }); doAttack("Hexed Strike", 0, 1, 2); enemy.dr = old; return d; }
+            if (key === "focus") { pushLog(d, { type: "system", text: "You Focus. (+2 baked into next cast.)" }); doAttack("Focused Cast", 2, 1, 4); return d; }
+            if (key === "riposte") { doAttack("Shield-Check", 0, 1, 2); return d; }
+            if (key === "bleed") { doAttack("Open Vein", 0, 2, 4, () => takeDamage(d, 1, "overextension")); return d; }
+            if (key === "lunge") { doAttack("Lunge", 1, 2, 5, () => takeDamage(d, 2, "exposed")); return d; }
+
+            return d;
+          });
+        };
+
+        // ---------------------------
+        // PROMOTION (after some fights)
+        // ---------------------------
+        const choosePromotionElement = (elementKey) => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            d.player.element = elementKey;
+            d.player.crossStyle = null;
+            d.player.promoTier = 1;
+            d.ui.showPromotion = false;
+            recalcPlayer(d);
+
+            pushLog(d, { type: "system", text: `Specialization bound: ${elementKey.toUpperCase()}.` });
+            pushLog(d, { type: "lore", text: `A new name fits you better now: ${d.player.title}.` });
+
+            return d;
+          });
+        };
+        const choosePromotionCross = (crossStyleKey) => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            d.player.crossStyle = crossStyleKey;
+            d.player.element = null;
+            d.player.promoTier = 1;
+            d.ui.showPromotion = false;
+            recalcPlayer(d);
+
+            pushLog(d, { type: "system", text: `Specialization taken: Cross-Training ${crossStyleKey.toUpperCase()}.` });
+            pushLog(d, { type: "lore", text: `A new name fits you better now: ${d.player.title}.` });
+
+            return d;
+          });
+        };
+
+        // ---------------------------
+        // BEACON (between runs)
+        // ---------------------------
+        const enterBeacon = () => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            d.mode = "beacon";
+            pushLog(d, { type: "lore", text: "The Beacon’s light does not comfort you. It simply proves you still exist." });
+            return d;
+          });
+        };
+
+        const buyUpgrade = (up) => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            if (d.meta.echoes < up.costEchoes) { pushLog(d, { type: "system", text: "Not enough Echoes." }); return d; }
+
+            // mats check
+            for (const [k,amt] of Object.entries(up.costMats || {})) {
+              if ((d.meta.bank[k] || 0) < amt) {
+                pushLog(d, { type: "system", text: `Missing materials: ${mat(k)?.name || k} (${amt}).` });
+                return d;
+              }
+            }
+
+            d.meta.echoes -= up.costEchoes;
+            for (const [k,amt] of Object.entries(up.costMats || {})) d.meta.bank[k] -= amt;
+
+            up.apply(d);
+            pushLog(d, { type: "system", text: `Beacon upgraded: ${up.name}.` });
+
+            return d;
+          });
+        };
+
+        const wakeForAnotherRun = () => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            const next = mkNewGame(Date.now());
+            next.meta = d.meta;
+            next.mode = "menu";
+            recalcPlayer(next);
+            pushLog(next, { type: "lore", text: "You sit in the Beacon’s shadow and decide whether you have another climb in you." });
+            return next;
+          });
+        };
+
+        // ---------------------------
+        // UI: Map reveal based on beacon upgrade
+        // ---------------------------
+        const visibleLocations = useMemo(() => {
+          const revealTier = clamp(1 + (state.meta.legacy.revealHints || 0), 1, 3);
+          return LOCATIONS.filter(l => l.tier <= revealTier);
+        }, [state.meta.legacy.revealHints]);
+
+        const reachable = useMemo(() => {
+          const n = neighborsOf(state.run.here);
+          return new Set(n);
+        }, [state.run.here]);
+
+        // initial gentle flavor
+        useEffect(() => {
+          setState((prev) => {
+            const d = structuredClone(prev);
+            if (d.run.log.length === 0) {
+              pushLog(d, { type: "lore", text: "This is a preview, but the mountain is real enough to kill you." });
+              pushLog(d, { type: "system", text: "Save/Load works. Extraction banks materials for Beacon upgrades." });
+            }
+            return d;
+          });
+        }, []);
+
+        // ---------------------------
+        // RENDER: SCREEN MODES
+        // ---------------------------
+
+        const TopHUD = () => (
+          <div className="absolute top-0 left-0 right-0 z-20">
+            <div className="mx-auto max-w-6xl px-4 md:px-6 pt-4">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div className="select-none">
+                  <div className="text-[11px] uppercase tracking-[0.28em] text-white/55">
+                    DRAGONFALL • Mountain Exile • v{VERSION}
+                  </div>
+                  <div className="text-xl md:text-2xl font-semibold tracking-tight">
+                    {state.mode === "menu" ? "The Beacon" :
+                     state.mode === "beacon" ? "Beacon Upgrades" :
+                     state.mode === "map" ? "Mountain Map" :
+                     state.mode === "combat" ? "Combat" :
+                     state.mode === "location" ? "Location" :
+                     state.mode.startsWith("setup") ? "Preparation" :
+                     state.mode === "dead" ? "Fallen" :
+                     "Dragonfall"}
+                  </div>
+                  {state.mode !== "menu" ? (
+                    <div className="text-sm text-white/65 mt-1">
+                      <span className="text-white/80 font-semibold">{classPrompt}</span>
+                      <span className="text-white/45"> • </span>
+                      <span className="text-white/70">{REGION_NAME[here?.tier || 1]}</span>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-white/65 mt-1">A light between deaths. A ledger of what you bring back.</div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={saveGame} variant="ghost">Save</Button>
+                  <Button onClick={loadGame} variant="ghost">Load</Button>
+                  <Button onClick={clearSave} variant="ghost">Clear</Button>
+                  <Button onClick={hardReset} variant="danger">New</Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
+        const RightHUD = () => (
+          <div className="absolute top-24 right-0 z-20">
+            <div className="pr-4 md:pr-6">
+              <div className="rounded-2xl bg-black/35 border border-white/10 backdrop-blur-md px-3 py-3 w-[min(360px,calc(100vw-1rem))]">
+                <div className="flex flex-wrap gap-2">
                   <Pill>HP {state.player.hp}/{state.player.hpMax}</Pill>
                   <Pill>XP {state.player.xp}</Pill>
                   <Pill>Echoes {state.meta.echoes}</Pill>
-                  <Pill>Gold {state.player.gold}</Pill>
                 </div>
-              }
-            >
-              {state.phase !== "play" ? (
-                <div className="space-y-3">
-                  <div className="text-white/80 leading-relaxed">
-                    Dragons own the sky. Cities endure as beacons. You will be cast into the Mountain Expanse.
-                    <span className="text-white font-semibold"> Promotions require XP.</span> Only extracted salvage endures—and extracted salvage buys power.
-                  </div>
+                <div className="mt-2 text-xs text-white/60">
+                  Banked materials fuel Beacon upgrades. Unextracted materials are lost on death.
+                </div>
+              </div>
+            </div>
+          </div>
+        );
 
-                  {state.ui.showClassTree ? (
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <div className="font-semibold">Class Lattice (visual)</div>
-                          <div className="text-sm text-white/70">Weapon → Style → (Earn XP) → Element OR Cross → Title reveal</div>
-                        </div>
-                        <Button variant="ghost" onClick={() => setState((p) => ({ ...p, ui: { ...p.ui, showClassTree: false } }))}>
-                          Hide
-                        </Button>
-                      </div>
-                      <div className="mt-3">
-                        <svg viewBox="0 0 100 48" className="w-full h-36">
-                          <defs>
-                            <linearGradient id="g" x1="0" x2="1">
-                              <stop offset="0" stopColor="rgba(124,58,237,0.85)" />
-                              <stop offset="1" stopColor="rgba(14,165,233,0.75)" />
-                            </linearGradient>
-                          </defs>
-                          <path d="M10 24 C 24 10, 34 10, 46 16" stroke="url(#g)" strokeWidth="1.5" fill="none" opacity="0.8" />
-                          <path d="M10 24 C 24 38, 34 38, 46 32" stroke="url(#g)" strokeWidth="1.5" fill="none" opacity="0.8" />
-                          <path d="M46 16 L 70 12" stroke="url(#g)" strokeWidth="1.5" opacity="0.8" />
-                          <path d="M46 16 L 70 22" stroke="url(#g)" strokeWidth="1.5" opacity="0.8" />
-                          <path d="M46 32 L 70 26" stroke="url(#g)" strokeWidth="1.5" opacity="0.8" />
-                          <path d="M46 32 L 70 36" stroke="url(#g)" strokeWidth="1.5" opacity="0.8" />
-                          <path d="M70 12 L 90 18" stroke="url(#g)" strokeWidth="1.5" opacity="0.8" />
-                          <path d="M70 36 L 90 30" stroke="url(#g)" strokeWidth="1.5" opacity="0.8" />
-
-                          {[
-                            { x: 4, y: 18, w: 12, h: 12, t: "Weapon" },
-                            { x: 40, y: 10, w: 14, h: 12, t: "Style" },
-                            { x: 40, y: 26, w: 14, h: 12, t: "Style" },
-                            { x: 64, y: 6, w: 12, h: 12, t: "Element" },
-                            { x: 64, y: 20, w: 12, h: 12, t: "Cross" },
-                            { x: 64, y: 30, w: 12, h: 12, t: "Cross" },
-                            { x: 84, y: 14, w: 12, h: 12, t: "Title" },
-                            { x: 84, y: 26, w: 12, h: 12, t: "Title" },
-                          ].map((b, i) => (
-                            <g key={i}>
-                              <rect x={b.x} y={b.y} width={b.w} height={b.h} rx="3"
-                                fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.18)" />
-                              <text x={b.x + b.w / 2} y={b.y + 8} textAnchor="middle" fontSize="6" fill="rgba(255,255,255,0.85)">
-                                {b.t}
-                              </text>
-                            </g>
-                          ))}
-                        </svg>
-                      </div>
-                      <div className="text-xs text-white/60">
-                        First promotion unlocks at <span className="text-white font-semibold">{state.player.nextPromoAt} XP</span>.
-                      </div>
+        const MenuScreen = () => (
+          <div className="relative z-10 min-h-screen flex items-center justify-center">
+            <div className="w-full max-w-5xl px-4 md:px-6">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+                <div className="lg:col-span-7">
+                  <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8">
+                    <div className="text-4xl md:text-5xl font-semibold tracking-tight">DRAGONFALL</div>
+                    <div className="text-white/70 mt-2 leading-relaxed">
+                      You climb a mountain that does not want you.
+                      You do not sell treasure — you bring back <span className="text-white font-semibold">materials</span>.
+                      You spend <span className="text-white font-semibold">Echoes</span> and <span className="text-white font-semibold">mats</span> to reshape your next exile.
                     </div>
-                  ) : (
-                    <Button variant="ghost" onClick={() => setState((p) => ({ ...p, ui: { ...p.ui, showClassTree: true } }))}>
-                      Show Class Lattice
-                    </Button>
-                  )}
+                    <Divider />
+                    <div className="flex flex-wrap gap-3">
+                      <Button onClick={beginNewExile}>New Exile</Button>
+                      <Button variant="ghost" onClick={() => {
+                        // continue if already started
+                        if (state.player.weapon && state.player.style) goMode("map");
+                        else beginNewExile();
+                      }}>
+                        Continue
+                      </Button>
+                      <Button variant="gold" onClick={enterBeacon}>Beacon</Button>
+                    </div>
 
-                  {state.phase === "start" ? (
-                    <div className="space-y-3">
-                      <div className="text-sm text-white/60">Choose your starting weapon.</div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {WEAPONS.map((w) => (
-                          <button
-                            key={w.key}
-                            onClick={() => chooseWeapon(w.key)}
-                            className={`rounded-2xl p-4 border text-left transition hover:bg-white/5 ${
-                              state.player.weapon === w.key ? "border-white/40 bg-white/5" : "border-white/10"
-                            }`}
-                          >
-                            <div className="text-lg font-semibold">{w.name}</div>
-                            <div className="text-sm text-white/70 mt-1">{w.tagline}</div>
-                            <div className="text-xs text-white/60 mt-3">
-                              Bias: Might {fmtBonus(w.bias.might)} • Finesse {fmtBonus(w.bias.finesse)} • Wits {fmtBonus(w.bias.wits)} • Will {fmtBonus(w.bias.will)}
-                            </div>
-                          </button>
+                    <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
+                      <div className="text-xs uppercase tracking-[0.22em] text-white/60">Current Beacon Holdings</div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {Object.keys(state.meta.bank).map((k) => (
+                          <Pill key={k}>{mat(k)?.name || k}: {state.meta.bank[k] || 0}</Pill>
                         ))}
                       </div>
                     </div>
-                  ) : null}
-
-                  {state.phase === "chooseStyle" ? (
-                    <div className="space-y-3">
-                      <div className="text-sm text-white/60">Choose your weapon style.</div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {weaponObj?.styles.map((s) => (
-                          <button
-                            key={s.key}
-                            onClick={() => chooseStyle(s.key)}
-                            className="rounded-2xl p-4 border text-left transition hover:bg-white/5 border-white/10"
-                          >
-                            <div className="text-lg font-semibold">{s.name}</div>
-                            <div className="text-sm text-white/70 mt-1">{s.desc}</div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {state.phase === "dead" ? (
-                    <div className="space-y-4">
-                      <div className="text-white/80 leading-relaxed">
-                        You are dead. The Beacon collects Echoes.
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <div className="rounded-2xl border border-white/10 p-4">
-                          <div className="font-semibold">Beacon Upgrades</div>
-                          <div className="text-xs text-white/60 mt-1">Account-wide.</div>
-                          <Divider />
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <div className="text-sm font-medium">Start HP +1</div>
-                                <div className="text-xs text-white/60">Cost: 6 Echoes</div>
-                              </div>
-                              <Button variant="ghost" onClick={() => metaSpend("Start HP +1", 6, (d) => { d.meta.legacy.startHP += 1; })}>
-                                Buy
-                              </Button>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <div className="text-sm font-medium">Reveal Hints +1</div>
-                                <div className="text-xs text-white/60">Cost: 4 Echoes</div>
-                              </div>
-                              <Button variant="ghost" onClick={() => metaSpend("Reveal Hints +1", 4, (d) => { d.meta.legacy.revealHints += 1; })}>
-                                Buy
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 p-4">
-                          <div className="font-semibold">Run Summary</div>
-                          <Divider />
-                          <div className="text-sm text-white/70">Depth reached: <span className="font-semibold text-white">{state.run.depth}</span></div>
-                          <div className="text-sm text-white/70 mt-1">XP earned: <span className="font-semibold text-white">{state.player.xp}</span></div>
-                          <div className="text-sm text-white/70 mt-1">Gold: <span className="font-semibold text-white">{state.player.gold}</span></div>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 p-4">
-                          <div className="font-semibold">Return</div>
-                          <div className="text-sm text-white/70 mt-1">Begin a new run with Beacon upgrades.</div>
-                          <Divider />
-                          <Button onClick={reviveToStart}>Wake at the Beacon</Button>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
+                  </div>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap gap-2">
-                    <Pill>Title: {state.player.title}</Pill>
-                    <Pill>Weapon: {weaponObj?.name}</Pill>
-                    <Pill>Style: {styleObj?.name}</Pill>
-                    {elementObj ? <Pill>Affinity: {elementObj.name}</Pill> : null}
-                    {state.player.crossStyle ? <Pill>Cross: {WEAPONS.flatMap(w => w.styles).find(s => s.key === state.player.crossStyle)?.name}</Pill> : null}
-                    <Pill>Region: {loc.region}</Pill>
-                    <Pill>Promo: {state.player.promoTier}/?</Pill>
-                  </div>
 
-                  <div className="rounded-2xl border border-white/10 p-4 bg-white/5">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-lg font-semibold">{loc.name}</div>
-                        <div className="text-sm text-white/70 mt-1">{loc.tone}</div>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <span className={`rounded-full px-2 py-1 text-xs border ${kindBadge(loc.kind, beaconHere).cls}`}>
-                          {kindBadge(loc.kind, beaconHere).label} • LV {loc.level}
-                        </span>
-                        {state.run.cleared?.[loc.id] && loc.kind === "danger" ? (
-                          <span className="text-xs text-white/60">Cleared</span>
-                        ) : null}
-                      </div>
+                <div className="lg:col-span-5">
+                  <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6">
+                    <div className="text-sm font-semibold tracking-wide">Tone</div>
+                    <div className="text-white/70 mt-2 leading-relaxed">
+                      The mountain is not a dungeon. It is a court.
+                      Every path is an argument. Every wound is a receipt.
+                      The Beacon remembers what you manage to extract —
+                      and forgets everything else.
                     </div>
-
-                    {state.run.inCombat && state.run.enemy ? (
-                      <div className="mt-3 flex items-center justify-between">
-                        <div>
-                          <div className="font-semibold">⚔️ {state.run.enemy.name}</div>
-                          <div className="text-xs text-white/60">Enemy DR {state.run.enemy.dr} • Attack DR {state.run.enemy.attackDR} • Area LV {state.run.enemy.areaLevel}</div>
-                        </div>
-                        <div className="text-lg font-semibold">HP {state.run.enemyHP}/{state.run.enemy.hp + Math.floor((state.run.enemy.areaLevel||1)/2)}</div>
-                      </div>
-                    ) : (
-                      <div className="mt-3 text-sm text-white/60">
-                        {safeHere ? "Safe air. No monsters here." : loc.kind === "danger" ? "Danger territory. If it’s not cleared, it bites." : "Quiet ground. For now."}
-                      </div>
-                    )}
+                    <Divider />
+                    <div className="text-xs text-white/60">
+                      v{VERSION} • Modes: Menu / Map / Location / Combat / Beacon
+                    </div>
                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="rounded-2xl border border-white/10 p-4">
-                      <div className="font-semibold">World Map</div>
-                      <div className="text-xs text-white/60 mt-1">Travel only to adjacent named places.</div>
-                      <Divider />
+        const SetupWeaponScreen = () => (
+          <div className="relative z-10 min-h-screen flex items-center justify-center">
+            <div className="w-full max-w-6xl px-4 md:px-6">
+              <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8">
+                <div className="text-sm uppercase tracking-[0.22em] text-white/60">Preparation</div>
+                <div className="text-2xl md:text-3xl font-semibold mt-1">Choose your armament</div>
+                <div className="text-white/70 mt-2">Only the first set of choices. You’ll earn specialization after blood and XP.</div>
+                <Divider />
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {WEAPONS.map((w) => (
+                    <button
+                      key={w.key}
+                      onClick={() => chooseWeapon(w.key)}
+                      className="rounded-3xl p-5 border text-left transition hover:bg-white/5 border-white/10 bg-white/5"
+                    >
+                      <div className="text-xl font-semibold">{w.name}</div>
+                      <div className="text-sm text-white/70 mt-1">{w.tagline}</div>
+                      <div className="text-xs text-white/60 mt-3">
+                        Bias: Might {fmtBonus(w.bias.might)} • Finesse {fmtBonus(w.bias.finesse)} • Wits {fmtBonus(w.bias.wits)} • Will {fmtBonus(w.bias.will)}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
 
-                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                        <svg viewBox="0 0 100 100" className="w-full h-44">
-                          {/* links */}
-                          {MAP_LOCATIONS.flatMap((a) => (a.links || []).map((bId) => {
-                            const b = MAP_LOCATIONS.find(x => x.id === bId);
-                            if (!b) return null;
-                            // draw each edge once
-                            if (a.id > b.id) return null;
-                            const near = a.id === state.run.currentLocationId || b.id === state.run.currentLocationId;
-                            const aSeen = state.run.discovered?.[a.id];
-                            const bSeen = state.run.discovered?.[b.id];
-                            const fade = aSeen && bSeen ? 1 : 0.25;
-                            return (
-                              <line
-                                key={`${a.id}-${b.id}`}
-                                x1={a.coords.x} y1={a.coords.y}
-                                x2={b.coords.x} y2={b.coords.y}
-                                stroke={near ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)"}
-                                strokeWidth={1.5}
-                                opacity={fade}
-                              />
-                            );
-                          }))}
+        const SetupStyleScreen = () => (
+          <div className="relative z-10 min-h-screen flex items-center justify-center">
+            <div className="w-full max-w-6xl px-4 md:px-6">
+              <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8">
+                <div className="text-sm uppercase tracking-[0.22em] text-white/60">Preparation</div>
+                <div className="text-2xl md:text-3xl font-semibold mt-1">Choose your discipline</div>
+                <div className="text-white/70 mt-2">Your first real identity. Specialization comes later.</div>
+                <Divider />
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {weaponObj?.styles.map((s) => (
+                    <button
+                      key={s.key}
+                      onClick={() => chooseStyle(s.key)}
+                      className="rounded-3xl p-5 border text-left transition hover:bg-white/5 border-white/10 bg-white/5"
+                    >
+                      <div className="text-xl font-semibold">{s.name}</div>
+                      <div className="text-sm text-white/70 mt-1">{s.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
 
-                          {/* nodes */}
-                          {MAP_LOCATIONS.map((n) => {
-                            const seen = !!state.run.discovered?.[n.id];
-                            const isHere = n.id === state.run.currentLocationId;
-                            const isBeacon = !!state.player.stationBuiltAt?.[n.id];
-                            const fill =
-                              isBeacon || n.kind === "safe" ? "rgba(34,197,94,0.18)"
-                              : n.kind === "station" ? "rgba(14,165,233,0.16)"
-                              : n.kind === "event" ? "rgba(99,102,241,0.16)"
-                              : "rgba(239,68,68,0.20)";
-                            const stroke = isHere ? "rgba(255,255,255,0.70)" : seen ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.10)";
-                            const opacity = seen ? 1 : 0.25;
+        const SetupPrologueScreen = () => (
+          <div className="relative z-10 min-h-screen flex items-center justify-center">
+            <div className="w-full max-w-5xl px-4 md:px-6">
+              <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8">
+                <div className="text-sm uppercase tracking-[0.22em] text-white/60">Prologue</div>
+                <div className="text-2xl md:text-3xl font-semibold mt-1">The mountain accepts your name… for now.</div>
+                <div className="text-white/70 mt-3 leading-relaxed">
+                  You arrive at the Beacon Gate with your chosen discipline.
+                  The air is thin, and the light feels <span className="text-white font-semibold">measured</span>.
+                  <br /><br />
+                  You will fight for a few steps. Gain XP. Then the mountain will offer you
+                  <span className="text-white font-semibold"> specialization</span>.
+                </div>
+                <Divider />
+                <div className="flex flex-wrap gap-3 items-center">
+                  <Pill>Title: {state.player.title}</Pill>
+                  <Pill>HP {state.player.hp}/{state.player.hpMax}</Pill>
+                  <Pill>Promo at {state.player.nextPromoAt} XP</Pill>
+                </div>
+                <div className="mt-5">
+                  <Button onClick={prologueContinue}>Open the Map</Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
 
-                            return (
-                              <g key={n.id} opacity={opacity}>
-                                <circle cx={n.coords.x} cy={n.coords.y} r={6.5} fill={fill} stroke={stroke} strokeWidth={2} />
-                                {isHere ? <circle cx={n.coords.x} cy={n.coords.y} r={10} fill="none" stroke="rgba(124,58,237,0.6)" strokeWidth={1.5} /> : null}
-                              </g>
-                            );
-                          })}
-                        </svg>
+        const MapScreen = () => {
+          const revealTier = clamp(1 + (state.meta.legacy.revealHints || 0), 1, 3);
 
-                        <div className="mt-2">
-                          <div className="text-xs text-white/60">Adjacent routes from <span className="text-white font-semibold">{loc.name}</span>:</div>
-                          <div className="flex flex-wrap gap-2 mt-2">
-                            {adjacentLocations.map((n) => {
-                              const isHere = n.id === state.run.currentLocationId;
-                              const seen = !!state.run.discovered?.[n.id];
-                              const isBeacon = !!state.player.stationBuiltAt?.[n.id];
-                              const badge = kindBadge(n.kind, isBeacon);
+          return (
+            <div className="relative z-10 min-h-screen">
+              <div className="absolute inset-0 top-28">
+                <div className="mx-auto max-w-6xl px-4 md:px-6 h-full">
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full pb-6">
+                    <div className="lg:col-span-8">
+                      <div className="rounded-3xl border border-white/10 bg-black/25 backdrop-blur-md h-[72vh] md:h-[76vh] overflow-hidden relative">
+                        {/* Big Mountain Map */}
+                        <div className="absolute inset-0">
+                          <svg viewBox="0 0 100 100" className="w-full h-full">
+                            {/* mountain mass */}
+                            <defs>
+                              <radialGradient id="mist" cx="50%" cy="25%" r="75%">
+                                <stop offset="0%" stopColor="rgba(255,255,255,0.06)" />
+                                <stop offset="60%" stopColor="rgba(255,255,255,0.02)" />
+                                <stop offset="100%" stopColor="rgba(0,0,0,0)" />
+                              </radialGradient>
+                              <linearGradient id="ridge" x1="0" y1="0" x2="1" y2="1">
+                                <stop offset="0%" stopColor="rgba(124,58,237,0.18)" />
+                                <stop offset="100%" stopColor="rgba(14,165,233,0.10)" />
+                              </linearGradient>
+                            </defs>
+
+                            {/* stylized ridgelines */}
+                            <path d="M0 85 C 12 70, 18 64, 28 60 C 36 56, 40 45, 48 40 C 58 34, 66 24, 74 24 C 82 24, 90 30, 100 36 L 100 100 L 0 100 Z"
+                              fill="rgba(255,255,255,0.03)" />
+                            <path d="M-5 88 C 10 72, 22 70, 34 64 C 44 59, 46 50, 56 44 C 66 38, 74 30, 86 30 C 94 30, 104 36, 110 40"
+                              stroke="url(#ridge)" strokeWidth="1.4" fill="none" opacity="0.7" />
+                            <path d="M-5 74 C 8 66, 18 58, 30 54 C 44 49, 52 40, 62 34 C 72 28, 82 20, 96 18"
+                              stroke="rgba(255,255,255,0.10)" strokeWidth="1.2" fill="none" opacity="0.8" />
+                            <path d="M0 64 C 18 58, 30 46, 42 40 C 56 34, 62 22, 74 16 C 86 10, 94 10, 100 12"
+                              stroke="rgba(255,255,255,0.08)" strokeWidth="1.2" fill="none" opacity="0.8" />
+
+                            {/* mist */}
+                            <rect x="0" y="0" width="100" height="100" fill="url(#mist)" opacity="0.9" />
+
+                            {/* connections (subtle) */}
+                            {CONNECTIONS.map(([a,b], i) => {
+                              const A = locById(a), B = locById(b);
+                              if (!A || !B) return null;
+
+                              // hide deeper connections if not revealed
+                              if (A.tier > revealTier || B.tier > revealTier) return null;
+
+                              const near = (a === state.run.here || b === state.run.here);
                               return (
-                                <Button
-                                  key={n.id}
-                                  variant={isHere ? "primary" : "ghost"}
-                                  onClick={() => travelTo(n.id)}
-                                  disabled={isHere || state.run.inCombat}
-                                  title={n.tone}
-                                >
-                                  {seen ? "→" : "✦"} {n.name}
-                                </Button>
+                                <line
+                                  key={i}
+                                  x1={A.x} y1={A.y}
+                                  x2={B.x} y2={B.y}
+                                  stroke={near ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.10)"}
+                                  strokeWidth={near ? 1.8 : 1.2}
+                                  opacity={near ? 1 : 0.85}
+                                />
                               );
                             })}
+
+                            {/* location markers */}
+                            {LOCATIONS.map((L) => {
+                              const visible = L.tier <= revealTier;
+                              if (!visible) return null;
+
+                              const isHere = L.id === state.run.here;
+                              const isReach = reachable.has(L.id);
+                              const safe = isSafeLocation(L, state.player.builtBeacons);
+
+                              const color =
+                                L.tier === 1 ? "rgba(59,130,246,0.18)" :
+                                L.tier === 2 ? "rgba(245,158,11,0.16)" :
+                                "rgba(239,68,68,0.16)";
+
+                              const stroke =
+                                isHere ? "rgba(255,255,255,0.75)" :
+                                isReach ? "rgba(255,255,255,0.35)" :
+                                "rgba(255,255,255,0.14)";
+
+                              const ring =
+                                safe ? "rgba(34,197,94,0.45)" :
+                                isReach ? "rgba(124,58,237,0.45)" :
+                                "rgba(0,0,0,0)";
+
+                              return (
+                                <g key={L.id} className="cursor-pointer" onClick={() => {
+                                  if (isHere) return;
+                                  if (!isReach) return;
+                                  travelTo(L.id);
+                                }}>
+                                  <circle cx={L.x} cy={L.y} r={7.2} fill={color} stroke={stroke} strokeWidth={2} />
+                                  <circle cx={L.x} cy={L.y} r={11.5} fill="none" stroke={ring} strokeWidth={1.6} opacity={isHere || isReach || safe ? 1 : 0} />
+                                  <text x={L.x + 10} y={L.y + 3} fontSize="3.2" fill="rgba(255,255,255,0.68)">
+                                    {L.name}
+                                  </text>
+                                </g>
+                              );
+                            })}
+                          </svg>
+                        </div>
+
+                        {/* map legend */}
+                        <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-3">
+                          <div className="rounded-2xl bg-black/35 border border-white/10 backdrop-blur-md px-3 py-2">
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-white/60">Map</div>
+                            <div className="text-sm text-white/80 mt-1">
+                              You are at <span className="font-semibold">{here?.name}</span>.
+                            </div>
+                            <div className="text-xs text-white/60 mt-1">
+                              Visible depth: <span className="text-white/85 font-semibold">{revealTier}</span> • Reachable places glow.
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl bg-black/35 border border-white/10 backdrop-blur-md px-3 py-2">
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-white/60">Legend</div>
+                            <div className="text-xs text-white/70 mt-1">Green ring = safe (rest/extract). Purple ring = reachable.</div>
                           </div>
                         </div>
                       </div>
+                    </div>
 
-                      <Divider />
-                      <div className="flex flex-wrap gap-2">
-                        <Button variant="ghost" onClick={rest} disabled={state.run.inCombat}>Rest</Button>
-                        <Button
-                          variant="ghost"
-                          onClick={buildBeacon}
-                          disabled={state.run.inCombat || beaconHere}
-                          title="Requires Relay Parts (carried). Makes this place safe."
-                        >
-                          {beaconHere ? "Beacon Built" : "Build Beacon"}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          onClick={extract}
-                          disabled={!canExtractHere || state.run.inCombat}
-                          title={canExtractHere ? "Move carried loot into extracted stash." : "Need safe/relay/beacon to extract."}
-                        >
-                          Extract
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          onClick={sellExtracted}
-                          disabled={state.run.inCombat}
-                          title="Sell extracted salvage for gold (safe places only)."
-                        >
-                          Sell Extracted
-                        </Button>
+                    {/* right panel - adjacent list */}
+                    <div className="lg:col-span-4">
+                      <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-5 h-[72vh] md:h-[76vh] overflow-auto">
+                        <div className="text-sm uppercase tracking-[0.22em] text-white/60">Adjacent Places</div>
+                        <div className="text-xl font-semibold mt-2">Choose where to go</div>
+                        <div className="text-sm text-white/70 mt-2">
+                          Travel is only between connected locations. Difficulty rises toward the inner spires.
+                        </div>
+                        <Divider />
+                        <div className="space-y-2">
+                          {neighborsOf(state.run.here)
+                            .map(id => locById(id))
+                            .filter(Boolean)
+                            .filter(L => L.tier <= (1 + (state.meta.legacy.revealHints || 0)))
+                            .map((L) => {
+                              const safe = isSafeLocation(L, state.player.builtBeacons);
+                              return (
+                                <button
+                                  key={L.id}
+                                  onClick={() => travelTo(L.id)}
+                                  className="w-full text-left rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition p-4"
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="font-semibold">{L.name}</div>
+                                    <div className="text-xs text-white/60">Tier {L.tier}</div>
+                                  </div>
+                                  <div className="text-xs text-white/60 mt-1">
+                                    {safe ? "Safe" : "Hostile"} • {L.kind} • {REGION_NAME[L.tier]}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                        </div>
+
+                        <Divider />
+                        <div className="text-sm font-semibold">Pack (unextracted)</div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {Object.keys(state.player.pack).map((k) => (
+                            <Pill key={k}>{mat(k)?.name || k}: {state.player.pack[k] || 0}</Pill>
+                          ))}
+                        </div>
+
+                        <Divider />
+                        <div className="flex flex-wrap gap-2">
+                          <Button variant="ghost" onClick={() => goMode("location")}>Return to Location</Button>
+                          <Button variant="gold" onClick={enterBeacon}>Beacon</Button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-white/10 p-4">
-                      <div className="font-semibold">Actions</div>
-                      <div className="text-xs text-white/60 mt-1">Dice decide. Failure hurts.</div>
-                      <Divider />
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        };
 
-                      {state.run.inCombat ? (
+        const LocationScreen = () => {
+          const L = here;
+          const safe = hereSafe;
+
+          return (
+            <div className="relative z-10 min-h-screen">
+              <div className="absolute inset-0 top-28">
+                <div className="mx-auto max-w-6xl px-4 md:px-6 h-full">
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full pb-6">
+                    <div className="lg:col-span-8">
+                      <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8 h-[72vh] md:h-[76vh] overflow-auto">
+                        <div className="text-sm uppercase tracking-[0.22em] text-white/60">{REGION_NAME[L?.tier || 1]}</div>
+                        <div className="text-3xl md:text-4xl font-semibold mt-1">{L?.name}</div>
+                        <div className="text-white/70 mt-4 leading-relaxed">
+                          {L?.lore}
+                        </div>
+
+                        <Divider />
+
+                        <div className="flex flex-wrap gap-2 items-center">
+                          <Pill>{safe ? "Safe ground" : "Hostile ground"}</Pill>
+                          <Pill>Tier {L?.tier}</Pill>
+                          <Pill>Kind: {L?.kind}</Pill>
+                        </div>
+
+                        <Divider />
+
+                        <div className="text-sm uppercase tracking-[0.22em] text-white/60">What now?</div>
+                        <div className="mt-3 flex flex-wrap gap-3">
+                          <Button onClick={explore} disabled={state.run.inCombat}>Explore</Button>
+                          <Button onClick={search} variant="ghost" disabled={state.run.inCombat}>Search</Button>
+                          <Button onClick={rest} variant="ghost" disabled={state.run.inCombat}>Rest</Button>
+                          <Button onClick={() => goMode("map")} variant="ghost" disabled={state.run.inCombat}>Open Map</Button>
+                          <Button onClick={extractToBank} variant="gold" disabled={!safe || state.run.inCombat}
+                            title={safe ? "Bank your pack materials." : "Need a safe place."}>
+                            Extract
+                          </Button>
+                          <Button onClick={buildBeacon} variant="ghost" disabled={state.run.inCombat}
+                            title="Requires Portable Relay upgrade + materials (Relay Parts + Ward Coil)">
+                            Build Beacon
+                          </Button>
+                        </div>
+
+                        <Divider />
+                        <div className="text-sm font-semibold">Pack (unextracted)</div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {Object.keys(state.player.pack).map((k) => (
+                            <Pill key={k}>{mat(k)?.name || k}: {state.player.pack[k] || 0}</Pill>
+                          ))}
+                        </div>
+
+                        <Divider />
+                        <div className="text-xs text-white/60 leading-relaxed">
+                          Safe places have no monsters when you rest. Hostile places can ambush you when you push your luck.
+                          Extraction only works in safe ground.
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="lg:col-span-4">
+                      <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-5 h-[72vh] md:h-[76vh] overflow-auto">
+                        <div className="text-sm uppercase tracking-[0.22em] text-white/60">Character</div>
+                        <div className="text-xl font-semibold mt-2">{state.player.title}</div>
+                        <div className="text-sm text-white/70 mt-1">
+                          Weapon: {weaponObj?.name || "—"} • Style: {styleObj?.name || "—"}
+                        </div>
+                        <div className="text-sm text-white/70 mt-1">
+                          {elementObj ? `Affinity: ${elementObj.name}` : state.player.crossStyle ? `Cross: ${WEAPONS.flatMap(w=>w.styles).find(s=>s.key===state.player.crossStyle)?.name}` : "Unspecialized"}
+                        </div>
+                        <Divider />
+                        <div className="grid grid-cols-2 gap-3">
+                          {["might","finesse","wits","will"].map((k) => (
+                            <div key={k} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                              <div className="text-[10px] uppercase tracking-[0.22em] text-white/60">{k}</div>
+                              <div className="text-lg font-semibold mt-1">{fmtBonus(state.player.stats[k])}</div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <Divider />
+                        <div className="text-sm font-semibold">Actions (combat set)</div>
+                        <div className="text-xs text-white/60 mt-1">Shown fully during combat.</div>
+                        <div className="mt-3 space-y-2">
+                          {skills.slice(0, 6).map((s) => (
+                            <div key={s.key} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                              <div className="flex items-center justify-between">
+                                <div className="font-semibold">{s.name}</div>
+                                <div className="text-xs text-white/50">{s.kind}</div>
+                              </div>
+                              <div className="text-xs text-white/60 mt-1">{s.desc}</div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <Divider />
                         <div className="flex flex-wrap gap-2">
+                          <Button variant="gold" onClick={enterBeacon}>Beacon</Button>
+                          <Button variant="ghost" onClick={() => goMode("map")}>Map</Button>
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const CombatScreen = () => {
+          const enemy = state.run.enemy;
+
+          return (
+            <div className="relative z-10 min-h-screen">
+              <div className="absolute inset-0 top-28">
+                <div className="mx-auto max-w-6xl px-4 md:px-6 h-full pb-6">
+                  <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8 h-[76vh] overflow-hidden relative">
+                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
+                      <div className="max-w-2xl">
+                        <div className="text-sm uppercase tracking-[0.22em] text-white/60">Combat</div>
+                        <div className="text-3xl md:text-4xl font-semibold mt-1">{enemy?.name}</div>
+                        <div className="text-white/70 mt-3 leading-relaxed">{enemy?.desc}</div>
+
+                        <Divider />
+
+                        <div className="flex flex-wrap gap-2">
+                          <Pill>Enemy HP {state.run.enemyHP}/{enemy?.hp}</Pill>
+                          <Pill>Enemy DR {enemy?.dr}</Pill>
+                          <Pill>Attack DR {enemy?.attackDR}</Pill>
+                          <Pill>Tier {enemy?.tier}</Pill>
+                        </div>
+
+                        <Divider />
+
+                        <div className="text-sm uppercase tracking-[0.22em] text-white/60">Choose an action</div>
+                        <div className="mt-3 flex flex-wrap gap-3">
                           <Button onClick={() => combatAction("attack")}>Attack</Button>
                           <Button variant="ghost" onClick={() => combatAction("defend")}>Brace</Button>
                           <Button variant="ghost" onClick={() => combatAction("maneuver")}>Maneuver</Button>
                           {skills
                             .filter((s) => s.kind === "action" && !["attack","defend","maneuver"].includes(s.key))
+                            .slice(0, 6)
                             .map((s) => (
                               <Button key={s.key} variant="ghost" onClick={() => combatAction(s.key)}>
                                 {s.name}
                               </Button>
                             ))}
                         </div>
-                      ) : (
-                        <div className="text-sm text-white/70">
-                          Travel via adjacent routes.
-                          {state.player.promoTier === 0 ? (
-                            <div className="mt-2 text-xs text-white/60">
-                              Earn <span className="text-white font-semibold">{Math.max(0, state.player.nextPromoAt - state.player.xp)}</span> more XP to unlock your first specialization.
-                            </div>
-                          ) : null}
-                          {safeHere ? (
-                            <div className="mt-2 text-xs text-white/60">This place is safe. Resting will never trigger monsters.</div>
-                          ) : null}
+
+                        <div className="mt-6 text-xs text-white/60">
+                          Combat is its own mode now. When it ends, you return to the location.
                         </div>
-                      )}
+                      </div>
+
+                      {/* right side: minimal player pane */}
+                      <div className="w-full md:w-[340px] shrink-0">
+                        <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
+                          <div className="text-sm uppercase tracking-[0.22em] text-white/60">You</div>
+                          <div className="text-xl font-semibold mt-2">{state.player.title}</div>
+                          <div className="text-sm text-white/70 mt-1">HP {state.player.hp}/{state.player.hpMax}</div>
+
+                          <Divider />
+
+                          <div className="grid grid-cols-2 gap-3">
+                            {["might","finesse","wits","will"].map((k) => (
+                              <div key={k} className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                                <div className="text-[10px] uppercase tracking-[0.22em] text-white/60">{k}</div>
+                                <div className="text-lg font-semibold mt-1">{fmtBonus(state.player.stats[k])}</div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <Divider />
+                          <div className="text-xs text-white/60">
+                            Pack is at risk. Extraction is only possible on safe ground.
+                          </div>
+                        </div>
+                      </div>
                     </div>
+
+                    {/* Vignette */}
+                    <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_60%_at_50%_40%,rgba(0,0,0,0),rgba(0,0,0,0.55))]" />
                   </div>
                 </div>
-              )}
-            </Card>
-
-            <Card title="Event Log" subtitle="Newest first. Rolls are explicit.">
-              <div className="space-y-2">
-                {state.run.log.length === 0 ? (
-                  <div className="text-white/60 text-sm">No events yet.</div>
-                ) : (
-                  state.run.log.map((l) => (
-                    <div
-                      key={l.id}
-                      className={`rounded-xl border px-3 py-2 text-sm ${
-                        l.type === "roll" ? "border-amber-400/20 bg-amber-500/10"
-                        : l.type === "system" ? "border-white/10 bg-white/5"
-                        : "border-indigo-400/20 bg-indigo-500/10"
-                      }`}
-                    >
-                      <div className="text-white/90">{l.text}</div>
-                    </div>
-                  ))
-                )}
               </div>
-            </Card>
-          </div>
-
-          <div className="lg:col-span-4 flex flex-col gap-4">
-            <Card title="Character" subtitle="Stats, skills, salvage economy">
-              <div className="flex flex-wrap gap-2">
-                <Pill>HP {state.player.hp}/{state.player.hpMax}</Pill>
-                <Pill>XP {state.player.xp}</Pill>
-                <Pill>Gold {state.player.gold}</Pill>
-                <Pill>Carry Value {sumLootValue(state.player.inventory)}</Pill>
-                <Pill>Extracted Value {sumLootValue(state.player.extracted)}</Pill>
-              </div>
-
-              <Divider />
-              <div className="grid grid-cols-2 gap-3">
-                {["might","finesse","wits","will"].map((k) => (
-                  <div key={k} className="rounded-xl border border-white/10 p-3">
-                    <div className="text-xs text-white/60">{k.toUpperCase()}</div>
-                    <div className="text-lg font-semibold">{fmtBonus(state.player.stats[k])}</div>
-                  </div>
-                ))}
-              </div>
-
-              <Divider />
-              <div className="text-sm font-semibold">Skills</div>
-              <div className="space-y-2 mt-2">
-                {skills.map((s) => (
-                  <div key={s.key} className="rounded-xl border border-white/10 p-3">
-                    <div className="flex items-center justify-between">
-                      <div className="font-medium">{s.name}</div>
-                      <span className="text-xs text-white/50">{s.kind}</span>
-                    </div>
-                    <div className="text-xs text-white/60 mt-1">{s.desc}</div>
-                  </div>
-                ))}
-              </div>
-
-              <Divider />
-              <div className="text-sm font-semibold">Inventory (carried)</div>
-              <div className="text-sm text-white/70 mt-2">
-                {state.player.inventory.length ? (
-                  <ul className="space-y-2">
-                    {state.player.inventory.map((it) => (
-                      <li key={it.id} className="rounded-xl border border-white/10 p-3 bg-white/5">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="font-medium">{it.name}</div>
-                            <div className="text-xs text-white/60 mt-1">{it.desc}</div>
-                          </div>
-                          <Pill>Value {it.value}</Pill>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : <div className="text-white/50">Empty.</div>}
-              </div>
-
-              <Divider />
-              <div className="text-sm font-semibold">Extracted (saved)</div>
-              <div className="text-sm text-white/70 mt-2">
-                {state.player.extracted.length ? (
-                  <ul className="space-y-2">
-                    {state.player.extracted.map((it) => (
-                      <li key={it.id} className="rounded-xl border border-white/10 p-3">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="font-medium">{it.name}</div>
-                            <div className="text-xs text-white/60 mt-1">{it.desc}</div>
-                          </div>
-                          <Pill>Value {it.value}</Pill>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : <div className="text-white/50">None yet.</div>}
-              </div>
-            </Card>
-
-            <Card title="Help" subtitle="What changed in v0.3">
-              <div className="text-sm text-white/70 leading-relaxed space-y-2">
-                <div><span className="font-semibold text-white">Map travel:</span> you move between <span className="font-semibold text-white">named locations</span> using adjacent routes.</div>
-                <div><span className="font-semibold text-white">Area monsters:</span> danger locations spawn enemies based on area level.</div>
-                <div><span className="font-semibold text-white">Safe rests:</span> safe places (and built beacons) have <span className="font-semibold text-white">no monsters</span>.</div>
-                <div><span className="font-semibold text-white">Loot value:</span> salvage has meaning + value. Extract it, then sell it in safe places.</div>
-                <div><span className="font-semibold text-white">Specialization:</span> at {state.player.nextPromoAt} XP choose <span className="font-semibold text-white">Element OR Cross</span>, then you get a class-title reveal.</div>
-              </div>
-            </Card>
-          </div>
-        </div>
-      </div>
-
-      {/* Promotion Modal */}
-      {state.phase === "play" && state.ui.showPromotion ? (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4">
-          <div className="max-w-2xl w-full rounded-2xl border border-white/10 bg-zinc-950/80 backdrop-blur p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-xl font-semibold">Specialization Unlocked</div>
-                <div className="text-sm text-white/70 mt-1">Choose one: bind an Element, or cross-train a Style. Then you’ll receive your class title.</div>
-              </div>
-              <Button variant="ghost" onClick={() => setState((p) => ({ ...p, ui: { ...p.ui, showPromotion: false } }))}>
-                Later
-              </Button>
             </div>
-            <Divider />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-white/10 p-4 bg-white/5">
-                <div className="font-semibold">Bind an Element</div>
-                <div className="text-sm text-white/70 mt-1">Sharper identity. Titles evolve.</div>
-                <div className="grid grid-cols-2 gap-2 mt-3">
-                  {ELEMENTS.map((e) => (
-                    <Button key={e.key} variant="ghost" onClick={() => choosePromotionElement(e.key)}>
-                      {e.name}
-                    </Button>
-                  ))}
+          );
+        };
+
+        const DeadScreen = () => (
+          <div className="relative z-10 min-h-screen flex items-center justify-center">
+            <div className="w-full max-w-5xl px-4 md:px-6">
+              <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8">
+                <div className="text-sm uppercase tracking-[0.22em] text-white/60">Fallen</div>
+                <div className="text-3xl md:text-4xl font-semibold mt-1">The mountain keeps the rest.</div>
+                <div className="text-white/70 mt-3 leading-relaxed">
+                  You died. Unextracted materials are gone.
+                  The Beacon grants you Echoes — not mercy.
+                </div>
+                <Divider />
+                <div className="flex flex-wrap gap-2">
+                  <Pill>Echoes {state.meta.echoes}</Pill>
+                  <Pill>Banked mats: {Object.values(state.meta.bank).reduce((a,b)=>a+b,0)}</Pill>
+                  <Pill>XP (this run): {state.player.xp}</Pill>
+                </div>
+                <Divider />
+                <div className="flex flex-wrap gap-3">
+                  <Button variant="gold" onClick={enterBeacon}>Enter Beacon</Button>
+                  <Button variant="ghost" onClick={beginNewExile}>New Exile</Button>
+                  <Button variant="ghost" onClick={() => goMode("menu")}>Back to Menu</Button>
                 </div>
               </div>
+            </div>
+          </div>
+        );
 
-              <div className="rounded-2xl border border-white/10 p-4 bg-white/5">
-                <div className="font-semibold">Cross-Train a Style</div>
-                <div className="text-sm text-white/70 mt-1">More options. Less raw power.</div>
-                <div className="grid grid-cols-2 gap-2 mt-3">
-                  {WEAPONS.flatMap((w) => w.styles)
-                    .filter((s) => s.key !== state.player.style)
-                    .slice(0, 8)
-                    .map((s) => (
-                      <Button key={s.key} variant="ghost" onClick={() => choosePromotionCross(s.key)}>
-                        {s.name}
+        const BeaconScreen = () => (
+          <div className="relative z-10 min-h-screen">
+            <div className="absolute inset-0 top-28">
+              <div className="mx-auto max-w-6xl px-4 md:px-6 h-full pb-6">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full">
+                  <div className="lg:col-span-7">
+                    <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 md:p-8 h-[76vh] overflow-auto">
+                      <div className="text-sm uppercase tracking-[0.22em] text-white/60">The Beacon</div>
+                      <div className="text-3xl md:text-4xl font-semibold mt-1">Upgrades</div>
+                      <div className="text-white/70 mt-3 leading-relaxed">
+                        You do not buy power with coin. You bind it with proof.
+                        Echoes are memory. Materials are <span className="text-white font-semibold">evidence</span>.
+                      </div>
+
+                      <Divider />
+                      <div className="flex flex-wrap gap-2">
+                        <Pill>Echoes: {state.meta.echoes}</Pill>
+                        <Pill>Reveal: {state.meta.legacy.revealHints || 0}</Pill>
+                        <Pill>Start HP: {state.meta.legacy.startHP || 0}</Pill>
+                        <Pill>Safe Rest: {state.meta.legacy.safeRest || 0}</Pill>
+                        <Pill>Build Beacons: {state.meta.legacy.canBuildBeacons ? "Yes" : "No"}</Pill>
+                        <Pill>Void Marks: {state.meta.legacy.voidMarks || 0}</Pill>
+                      </div>
+
+                      <Divider />
+                      <div className="space-y-3">
+                        {BEACON_UPGRADES.map((up) => {
+                          const canAffordEcho = state.meta.echoes >= up.costEchoes;
+                          const canAffordMats = Object.entries(up.costMats || {}).every(([k,amt]) => (state.meta.bank[k] || 0) >= amt);
+                          const ok = canAffordEcho && canAffordMats;
+
+                          return (
+                            <div key={up.key} className="rounded-3xl border border-white/10 bg-white/5 p-5">
+                              <div className="flex items-start justify-between gap-4">
+                                <div>
+                                  <div className="text-xl font-semibold">{up.name}</div>
+                                  <div className="text-sm text-white/70 mt-1">{up.desc}</div>
+                                  <div className="text-xs text-white/60 mt-3">
+                                    Cost: <span className="text-white/80 font-semibold">{up.costEchoes}</span> Echoes
+                                    {Object.keys(up.costMats || {}).length ? (
+                                      <>
+                                        {" "}•{" "}
+                                        {Object.entries(up.costMats).map(([k,amt]) => (
+                                          <span key={k} className="mr-2">
+                                            {mat(k)?.name || k} <span className="text-white/80 font-semibold">x{amt}</span>
+                                          </span>
+                                        ))}
+                                      </>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <div>
+                                  <Button variant={ok ? "primary" : "ghost"} disabled={!ok} onClick={() => buyUpgrade(up)}>
+                                    Bind
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="lg:col-span-5">
+                    <div className="rounded-3xl border border-white/10 bg-black/35 backdrop-blur-md p-6 h-[76vh] overflow-auto">
+                      <div className="text-sm uppercase tracking-[0.22em] text-white/60">Bank</div>
+                      <div className="text-2xl font-semibold mt-2">Extracted Materials</div>
+                      <div className="text-white/70 mt-2">Only what you extracted survives.</div>
+                      <Divider />
+                      <div className="space-y-2">
+                        {Object.keys(state.meta.bank).map((k) => (
+                          <div key={k} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <div className="flex items-center justify-between">
+                              <div className="font-semibold">{mat(k)?.name || k}</div>
+                              <div className="text-sm text-white/80 font-semibold">{state.meta.bank[k] || 0}</div>
+                            </div>
+                            <div className="text-xs text-white/60 mt-1">{mat(k)?.desc || "—"}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <Divider />
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="ghost" onClick={() => goMode("menu")}>Menu</Button>
+                        <Button onClick={beginNewExile}>New Exile</Button>
+                        <Button variant="gold" onClick={wakeForAnotherRun}>Wake (to Menu)</Button>
+                      </div>
+
+                      <Divider />
+                      <div className="text-xs text-white/60 leading-relaxed">
+                        In later versions, Beacon upgrades will unlock new map layers, new enemy ecologies,
+                        and altered routes through the mountain.
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
+        // ---------------------------
+        // Promotion Modal (kept; now fits new flow)
+        // ---------------------------
+        const PromotionModal = () => (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+            <div className="max-w-2xl w-full rounded-3xl border border-white/10 bg-zinc-950/80 backdrop-blur p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xl font-semibold">Specialization Unlocked</div>
+                  <div className="text-sm text-white/70 mt-1">
+                    Choose one: bind an Element, or cross-train a Style.
+                  </div>
+                </div>
+                <Button variant="ghost" onClick={() => setState((p) => ({ ...p, ui: { ...p.ui, showPromotion: false } }))}>
+                  Later
+                </Button>
+              </div>
+              <Divider />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="rounded-3xl border border-white/10 p-4 bg-white/5">
+                  <div className="font-semibold">Bind an Element</div>
+                  <div className="text-sm text-white/70 mt-1">Sharper identity. Titles evolve.</div>
+                  <div className="grid grid-cols-2 gap-2 mt-3">
+                    {ELEMENTS.map((e) => (
+                      <Button key={e.key} variant="ghost" onClick={() => choosePromotionElement(e.key)}>
+                        {e.name}
                       </Button>
                     ))}
+                  </div>
                 </div>
-                <div className="text-xs text-white/50 mt-2">(Preview: curated list for now.)</div>
+
+                <div className="rounded-3xl border border-white/10 p-4 bg-white/5">
+                  <div className="font-semibold">Cross-Train a Style</div>
+                  <div className="text-sm text-white/70 mt-1">More options. Less raw power.</div>
+                  <div className="grid grid-cols-2 gap-2 mt-3">
+                    {WEAPONS.flatMap((w) => w.styles)
+                      .filter((s) => s.key !== state.player.style)
+                      .slice(0, 8)
+                      .map((s) => (
+                        <Button key={s.key} variant="ghost" onClick={() => choosePromotionCross(s.key)}>
+                          {s.name}
+                        </Button>
+                      ))}
+                  </div>
+                  <div className="text-xs text-white/50 mt-2">(Preview: curated list for now.)</div>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      ) : null}
+        );
 
-      {/* Class Reveal Modal */}
-      {state.phase === "play" && state.ui.showClassReveal ? (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4">
-          <div className="max-w-xl w-full rounded-2xl border border-white/10 bg-zinc-950/80 backdrop-blur p-4">
-            <div className="text-xl font-semibold">Name Claimed</div>
-            <div className="text-sm text-white/70 mt-2">
-              {state.ui.classRevealText || `You are now known as: ${state.player.title}.`}
-            </div>
-            <Divider />
-            <div className="flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setState(p => ({ ...p, ui: { ...p.ui, showClassReveal: false } }))}>
-                Continue
-              </Button>
-            </div>
+        return (
+          <div className="relative min-h-screen text-white overflow-hidden">
+            <Background mode={state.mode} />
+            <TopHUD />
+            {state.mode !== "menu" ? <RightHUD /> : null}
+
+            {/* Screen routing */}
+            {state.mode === "menu" ? <MenuScreen /> : null}
+            {state.mode === "setup_weapon" ? <SetupWeaponScreen /> : null}
+            {state.mode === "setup_style" ? <SetupStyleScreen /> : null}
+            {state.mode === "setup_prologue" ? <SetupPrologueScreen /> : null}
+            {state.mode === "map" ? <MapScreen /> : null}
+            {state.mode === "location" ? <LocationScreen /> : null}
+            {state.mode === "combat" ? <CombatScreen /> : null}
+            {state.mode === "beacon" ? <BeaconScreen /> : null}
+            {state.mode === "dead" ? <DeadScreen /> : null}
+
+            {/* Promotion Modal */}
+            {state.ui.showPromotion ? <PromotionModal /> : null}
+
+            {/* Whisper Log (small, semi-transparent) */}
+            {state.mode !== "menu" ? <WhisperLog lines={state.run.log} /> : null}
+
+            {/* Toast */}
+            {state.ui.toast ? (
+              <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50">
+                <div className="rounded-full bg-white text-black px-4 py-2 text-sm shadow-xl">{state.ui.toast}</div>
+              </div>
+            ) : null}
           </div>
-        </div>
-      ) : null}
+        );
+      }
 
-      {/* Toast */}
-      {toast ? (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2">
-          <div className="rounded-full bg-white text-black px-4 py-2 text-sm shadow-xl">{toast}</div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-ReactDOM.render(
-  React.createElement(DragonfallMountainExilePreview),
-  document.getElementById("root")
-);
+      ReactDOM.render(
+        React.createElement(DragonfallMountainExilePreview),
+        document.getElementById("root")
+      );
     </script>
   </body>
 </html>
