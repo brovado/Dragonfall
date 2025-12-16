@@ -98,8 +98,6 @@
   };
 
   // Combat adapter:
-  // If DF.logic.combat is mature, use it.
-  // Otherwise we run a minimal placeholder loop, but *still inside the machine*.
   const combatAPI = () => (DF.logic && DF.logic.combat) ? DF.logic.combat : null;
 
   const startCombat = (state, enemyHint) => {
@@ -151,13 +149,11 @@
 
     // Engine-backed combat
     if (state.combat.engine === "DF" && Combat) {
-      // We support a few likely API shapes without forcing a rewrite.
       const enc = state.combat.encounter;
 
       try {
         if (typeof Combat.step === "function") {
           const out = Combat.step(enc, { player: state.player });
-          // Expect out to possibly include playerDelta, isOver, log lines
           if (out && out.log) {
             (Array.isArray(out.log) ? out.log : [out.log]).forEach((l) => log(l));
           }
@@ -184,7 +180,6 @@
       } catch (e) {
         console.warn("Combat.step failed, falling back:", e);
       }
-      // If no compatible step method: don’t brick the run—fallback to minimal.
     }
 
     // Minimal combat
@@ -240,15 +235,12 @@
   };
 
   const rewardAfterCombat = (state) => {
-    // Loot is “Beacon buffs / meta upgrades”, so we award a run-loot token.
-    // Later you’ll convert these on Extract or on Death meta.
     const loot = { kind: "essence", amount: 1 };
     log("🜂 You harvest essence.");
     const runLoot = state.runLoot.concat([loot]);
     const xpGain = 1;
     const xp = state.player.xp + xpGain;
 
-    // Promotions later; for now just level on simple thresholds
     const nextLevel = 1 + Math.floor(xp / 5);
 
     return {
@@ -264,7 +256,6 @@
   };
 
   const tryBuildBeacon = (state) => {
-    // Requires 3 essence in this placeholder.
     const essence = state.runLoot.filter((x) => x.kind === "essence").length;
     if (essence < 3) {
       log("⛓️ Not enough essence to build a beacon (need 3).");
@@ -275,28 +266,28 @@
       ...state,
       mode: "PLAY",
       beacons: state.beacons.concat([{ siteId: state.siteId, createdAt: Date.now() }]),
-      runLoot: state.runLoot.filter((x, i) => !(x.kind === "essence" && i < 3)), // crude consume
+      runLoot: state.runLoot.filter((x, i) => !(x.kind === "essence" && i < 3)),
     };
   };
 
   // -----------------------------
   // State Machine (Reducer)
   // -----------------------------
-  const initialMachineState = (propsGame) => {
-    // If App passes a game object, use it. Otherwise create a safe minimal run.
-    const game = propsGame || {};
-    const siteId = game.siteId || "start";
-    const player = game.player || { hp: 12, maxHp: 12, xp: 0, level: 1, weapon: "Sword", style: "Vagrant" };
+  const initialMachineState = (game) => {
+    const g = game || {};
+    const siteId = g.siteId || "start";
+    const player =
+      g.player || { hp: 12, maxHp: 12, xp: 0, level: 1, weapon: "Sword", style: "Vagrant" };
 
     return {
-      mode: game.mode || "PLAY",
+      mode: g.mode || "PLAY",
       siteId,
       player,
-      runLoot: game.runLoot || [],
-      beacons: game.beacons || [],
-      event: game.event || null,
-      combat: game.combat || null,
-      deathReason: game.deathReason || null,
+      runLoot: g.runLoot || [],
+      beacons: g.beacons || [],
+      event: g.event || null,
+      combat: g.combat || null,
+      deathReason: g.deathReason || null,
       rollingLabel: null,
     };
   };
@@ -304,7 +295,6 @@
   const reducer = (state, action) => {
     switch (action.type) {
       case "SYNC_FROM_PARENT": {
-        // Optional: lets App drive persisted state.
         return initialMachineState(action.game);
       }
 
@@ -324,7 +314,6 @@
         const heal = 2 + Math.floor(Math.random() * 3);
         const nextHp = clamp(state.player.hp + heal, 0, state.player.maxHp);
         log(`🛏️ You rest and recover ${nextHp - state.player.hp} HP.`);
-        // Optional danger tick: small chance to be ambushed
         const ambushRoll = d20();
         if (ambushRoll >= 19) {
           log("⚠️ Ambush during rest!");
@@ -334,10 +323,8 @@
       }
 
       case "PLAY_EXTRACT": {
-        // Extraction: convert runLoot → meta (placeholder is just logging).
         const count = state.runLoot.length;
         log(`🚪 You extract with ${count} loot.`);
-        // In v0.5, you likely route to a Beacon/Meta screen; for now, just clear run loot.
         return { ...state, runLoot: [], mode: "PLAY" };
       }
 
@@ -382,36 +369,47 @@
 
         if (choice.kind === "loot") {
           log("🎁 You take what you can carry.");
-          return { ...state, runLoot: state.runLoot.concat([{ kind: "essence", amount: 1 }]), mode: "PLAY", event: null };
+          return {
+            ...state,
+            runLoot: state.runLoot.concat([{ kind: "essence", amount: 1 }]),
+            mode: "PLAY",
+            event: null,
+          };
         }
 
         if (choice.kind === "check") {
-          // Stat checks are coming; for now use flat d20 vs DR.
           const roll = d20();
           const dr = choice.dr || 12;
           const pass = roll >= dr;
 
           if (pass) {
             log(`✅ Success (${roll} vs ${dr}).`);
-            // Reward: essence or heal
             if (choice.id === "pray") {
               const heal = 3;
               const nextHp = clamp(state.player.hp + heal, 0, state.player.maxHp);
               log(`✨ Warmth returns. +${nextHp - state.player.hp} HP.`);
-              return { ...state, player: { ...state.player, hp: nextHp }, event: null, mode: "PLAY" };
+              return {
+                ...state,
+                player: { ...state.player, hp: nextHp },
+                event: null,
+                mode: "PLAY",
+              };
             }
             log("🜂 You gain essence.");
-            return { ...state, runLoot: state.runLoot.concat([{ kind: "essence", amount: 1 }]), event: null, mode: "PLAY" };
+            return {
+              ...state,
+              runLoot: state.runLoot.concat([{ kind: "essence", amount: 1 }]),
+              event: null,
+              mode: "PLAY",
+            };
           }
 
-          // Failure: sometimes bite, sometimes escalate
           log(`❌ Fail (${roll} vs ${dr}).`);
           const bite = 2;
           const nextHp = state.player.hp - bite;
           log(`🩸 You pay for it. -${bite} HP.`);
           const next = { ...state, player: { ...state.player, hp: nextHp } };
           if (next.player.hp <= 0) return killPlayer(next, "You collapse after a mistake.");
-          // Small chance it becomes combat anyway
           if (d20() >= 18) {
             log("⚠️ Your failure draws attention.");
             return startCombat({ ...next, event: null }, "Drawn Predator");
@@ -443,9 +441,12 @@
   function PlayScreen(props) {
     const React = window.React;
 
-    const [state, dispatch] = React.useReducer(reducer, initialMachineState(props.game));
+    const [state, dispatch] = React.useReducer(
+      reducer,
+      initialMachineState(props.game)
+    );
 
-    // If parent wants state persistence, expose changes
+    // Optional: let parent sync with this sub-machine later
     React.useEffect(() => {
       if (typeof props.onGameChange === "function") {
         props.onGameChange({
@@ -461,7 +462,6 @@
       }
     }, [state]);
 
-    // Resolve “rolling” quickly (feels dice-y without heavy animations)
     React.useEffect(() => {
       if (state.mode !== "ROLLING") return;
       const t = setTimeout(() => dispatch({ type: "ROLL_RESOLVE" }), 450);
@@ -470,7 +470,6 @@
 
     const site = getSiteById(state.siteId);
 
-    // UI helpers
     const Card = ({ title, children }) =>
       React.createElement(
         "div",
@@ -517,7 +516,9 @@
     // COMBAT
     if (state.mode === "COMBAT") {
       const enemyName =
-        state.combat && state.combat.engine === "MIN" && state.combat.enemy ? state.combat.enemy.name : "Enemy";
+        state.combat && state.combat.engine === "MIN" && state.combat.enemy
+          ? state.combat.enemy.name
+          : "Enemy";
 
       return React.createElement(
         "div",
@@ -529,8 +530,16 @@
           React.createElement(
             Card,
             { title: "Player" },
-            React.createElement("div", { className: "text-sm opacity-90" }, `HP: ${state.player.hp}/${state.player.maxHp}`),
-            React.createElement("div", { className: "text-xs opacity-70" }, `Lvl ${state.player.level} • XP ${state.player.xp}`)
+            React.createElement(
+              "div",
+              { className: "text-sm opacity-90" },
+              `HP: ${state.player.hp}/${state.player.maxHp}`
+            ),
+            React.createElement(
+              "div",
+              { className: "text-xs opacity-70" },
+              `Lvl ${state.player.level} • XP ${state.player.xp}`
+            )
           ),
           React.createElement(
             Card,
@@ -539,17 +548,33 @@
               ? React.createElement(
                   React.Fragment,
                   null,
-                  React.createElement("div", { className: "text-sm opacity-90" }, `HP: ${state.combat.enemy.hp}`),
-                  React.createElement("div", { className: "text-xs opacity-70" }, `DR: ${state.combat.enemy.dr} • DMG: ${state.combat.enemy.dmg}`)
+                  React.createElement(
+                    "div",
+                    { className: "text-sm opacity-90" },
+                    `HP: ${state.combat.enemy.hp}`
+                  ),
+                  React.createElement(
+                    "div",
+                    { className: "text-xs opacity-70" },
+                    `DR: ${state.combat.enemy.dr} • DMG: ${state.combat.enemy.dmg}`
+                  )
                 )
-              : React.createElement("div", { className: "text-sm opacity-80" }, "Engine combat running…")
+              : React.createElement(
+                  "div",
+                  { className: "text-sm opacity-80" },
+                  "Engine combat running…"
+                )
           )
         ),
         React.createElement(
           "div",
           { className: "flex gap-2 flex-wrap" },
           Btn({ onClick: () => dispatch({ type: "COMBAT_STEP" }), children: "Step (Roll)" }),
-          Btn({ onClick: () => log("⛔ Retreat not allowed yet."), children: "Retreat", disabled: true })
+          Btn({
+            onClick: () => log("⛔ Retreat not allowed yet."),
+            children: "Retreat",
+            disabled: true,
+          })
         ),
         React.createElement(
           "div",
@@ -587,8 +612,16 @@
         "div",
         { className: "space-y-3" },
         React.createElement("div", { className: "text-lg font-bold" }, site.name),
-        React.createElement("div", { className: "opacity-80 text-sm" }, state.rollingLabel || "Rolling…"),
-        React.createElement("div", { className: "text-xs opacity-60" }, "The mountain decides.")
+        React.createElement(
+          "div",
+          { className: "opacity-80 text-sm" },
+          state.rollingLabel || "Rolling…"
+        ),
+        React.createElement(
+          "div",
+          { className: "text-xs opacity-60" },
+          "The mountain decides."
+        )
       );
     }
 
@@ -596,9 +629,15 @@
     return React.createElement(
       "div",
       { className: "space-y-3" },
-      React.createElement("div", { className: "flex items-baseline justify-between" },
+      React.createElement(
+        "div",
+        { className: "flex items-baseline justify-between" },
         React.createElement("div", { className: "text-lg font-bold" }, site.name),
-        React.createElement("div", { className: "text-xs opacity-70" }, `Danger ${site.danger || 1}`)
+        React.createElement(
+          "div",
+          { className: "text-xs opacity-70" },
+          `Danger ${site.danger || 1}`
+        )
       ),
 
       React.createElement(
@@ -607,26 +646,61 @@
         React.createElement(
           Card,
           { title: "Status" },
-          React.createElement("div", { className: "text-sm opacity-90" }, `HP: ${state.player.hp}/${state.player.maxHp}`),
-          React.createElement("div", { className: "text-xs opacity-70" }, `Lvl ${state.player.level} • XP ${state.player.xp}`),
-          React.createElement("div", { className: "text-xs opacity-70" }, `Weapon: ${state.player.weapon} • Style: ${state.player.style}`)
+          React.createElement(
+            "div",
+            { className: "text-sm opacity-90" },
+            `HP: ${state.player.hp}/${state.player.maxHp}`
+          ),
+          React.createElement(
+            "div",
+            { className: "text-xs opacity-70" },
+            `Lvl ${state.player.level} • XP ${state.player.xp}`
+          ),
+          React.createElement(
+            "div",
+            { className: "text-xs opacity-70" },
+            `Weapon: ${state.player.weapon} • Style: ${state.player.style}`
+          )
         ),
         React.createElement(
           Card,
           { title: "Run Loot" },
-          React.createElement("div", { className: "text-sm opacity-90" }, `${state.runLoot.length} item(s)`),
-          React.createElement("div", { className: "text-xs opacity-70" }, "Loot persists only if extracted / beaconed (later).")
+          React.createElement(
+            "div",
+            { className: "text-sm opacity-90" },
+            `${state.runLoot.length} item(s)`
+          ),
+          React.createElement(
+            "div",
+            { className: "text-xs opacity-70" },
+            "Loot persists only if extracted / beaconed (later)."
+          )
         )
       ),
 
       React.createElement(
         "div",
         { className: "flex gap-2 flex-wrap" },
-        Btn({ onClick: () => dispatch({ type: "PLAY_EXPLORE" }), children: "Explore" }),
-        Btn({ onClick: () => dispatch({ type: "PLAY_STIR" }), children: "Stir Trouble" }),
-        Btn({ onClick: () => dispatch({ type: "PLAY_REST" }), children: "Rest" }),
-        Btn({ onClick: () => dispatch({ type: "PLAY_EXTRACT" }), children: "Extract" }),
-        Btn({ onClick: () => dispatch({ type: "PLAY_BUILD_BEACON" }), children: "Build Beacon" })
+        React.createElement(Btn, {
+          onClick: () => dispatch({ type: "PLAY_EXPLORE" }),
+          children: "Explore",
+        }),
+        React.createElement(Btn, {
+          onClick: () => dispatch({ type: "PLAY_STIR" }),
+          children: "Stir Trouble",
+        }),
+        React.createElement(Btn, {
+          onClick: () => dispatch({ type: "PLAY_REST" }),
+          children: "Rest",
+        }),
+        React.createElement(Btn, {
+          onClick: () => dispatch({ type: "PLAY_EXTRACT" }),
+          children: "Extract",
+        }),
+        React.createElement(Btn, {
+          onClick: () => dispatch({ type: "PLAY_BUILD_BEACON" }),
+          children: "Build Beacon",
+        })
       ),
 
       React.createElement(
@@ -637,7 +711,10 @@
     );
   }
 
-  // Attach into DF namespace (no imports, no bundler)
+  // -----------------------------
+  // Attach into DF namespace
+  // -----------------------------
+  DF.PlayScreen = PlayScreen;          // <-- key fix for your blank screen
   DF.ui = DF.ui || {};
   DF.ui.screens = DF.ui.screens || {};
   DF.ui.screens.PlayScreen = PlayScreen;
