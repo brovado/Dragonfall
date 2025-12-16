@@ -1,0 +1,1 @@
+(() => { const {React}=DF; const h=React.createElement; DF.Toast=({toast})=>toast?h("div",{className:"fixed bottom-4 left-1/2 -translate-x-1/2"},h("div",{className:"rounded-full bg-white text-black px-4 py-2 text-sm shadow-xl"},toast)):null; })();

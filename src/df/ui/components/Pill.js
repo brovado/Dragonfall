@@ -1,0 +1,1 @@
+(() => { const {React}=DF; const h=React.createElement; DF.Pill=({children})=>h("span",{className:"inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs bg-white/10 border border-white/10"},children); })();

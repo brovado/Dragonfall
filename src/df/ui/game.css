@@ -1,0 +1,20 @@
+/* Dragonfall client skin */
+.game,body{margin:0;padding:0;}
+.game__frame{min-height:100vh;}
+.crt{position:relative;}
+.crt::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(to bottom,rgba(255,255,255,0.05),rgba(0,0,0,0.15)),
+repeating-linear-gradient(to bottom,rgba(255,255,255,0.03) 0px,rgba(255,255,255,0.03) 1px,rgba(0,0,0,0) 2px,rgba(0,0,0,0) 4px);mix-blend-mode:overlay;opacity:0.35;}
+.df-client{min-height:100vh;display:grid;place-items:center;padding:18px;background:radial-gradient(80% 60% at 50% 0%,rgba(124,58,237,0.25),rgba(0,0,0,0)),
+radial-gradient(70% 60% at 20% 20%,rgba(14,165,233,0.18),rgba(0,0,0,0)),linear-gradient(to bottom,rgba(0,0,0,1),rgba(9,9,11,1));}
+.df-overlay{position:fixed;inset:0;pointer-events:none;background:radial-gradient(40% 40% at 50% 50%,rgba(255,255,255,0.06),rgba(0,0,0,0));}
+.df-frame{width:min(1180px,100%);border-radius:18px;border:1px solid rgba(255,255,255,0.12);background:rgba(12,12,14,0.62);backdrop-filter:blur(10px);box-shadow:0 30px 80px rgba(0,0,0,0.55);overflow:hidden;}
+.df-hud{display:flex;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.10);background:linear-gradient(to bottom,rgba(255,255,255,0.06),rgba(0,0,0,0));}
+.df-title{font-weight:700;letter-spacing:0.3px;}
+.df-sub{font-size:12px;opacity:0.75;margin-top:2px;}
+.df-hud-right{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;}
+.df-pill{font-size:12px;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);}
+.df-viewport{padding:0;}
+.df-log{padding:10px 14px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.25);}
+.df-log-label{font-size:11px;opacity:0.6;letter-spacing:2px;}
+.df-log-body{margin-top:6px;display:grid;gap:4px;}
+.df-log-line{font-size:12px;opacity:0.78;}

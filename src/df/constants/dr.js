@@ -1,0 +1,1 @@
+(() => { DF.DR={easy:10,standard:13,hard:16,extreme:19}; })();

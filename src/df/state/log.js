@@ -1,0 +1,1 @@
+(() => { DF.pushLog=(state,entry)=>{const line={id:DF.uid(),t:Date.now(),...entry};state.run.log=[line,...state.run.log].slice(0,140);}; })();
