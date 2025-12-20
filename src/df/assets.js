@@ -3,12 +3,18 @@
   if (!DF) return;
 
   const manifest = {
-    images: [
-{ key: "glyph", url: "src/assets/img/glyph.svg", type: "image" },
-      { key: "main_pc",     url: "src/assets/img/main_pc.png",      type: "image" },
-      { key: "starter_kit", url: "src/assets/img/starter_kit.png",  type: "image" },
-      { key: "town_tiles",  url: "src/assets/img/town_tiles.png",   type: "image" },
-    ],
+images: [
+  { key:"ui_title", url:"assets/img/ui/screens/title.png", type:"image" },
+  { key:"ui_gameover", url:"assets/img/ui/screens/screen_gameover.png", type:"image" },
+  { key:"ui_transition", url:"assets/img/ui/screens/transition.png", type:"image" },
+  { key:"ui_beacon", url:"assets/img/ui/screens/screen_beacon.png", type:"image" },
+
+  { key:"ui_icons", url:"assets/img/ui/kit/ui_icons_basics.png", type:"image" },
+  { key:"ui_input", url:"assets/img/ui/kit/ui_input.png", type:"image" },
+  { key:"ui_windows", url:"assets/img/ui/kit/ui_windows.png", type:"image" },
+  { key:"ui_dice", url:"assets/img/ui/kit/ui_dice.png", type:"image" },
+  { key:"ui_hud", url:"assets/img/ui/kit/ui_hud.png", type:"image" },
+],
     audio: [
       // Keeps the audio system “warm” even if you haven’t added real sfx yet
       { key: "silence", url: "data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=", type: "audio" },
