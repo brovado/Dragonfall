@@ -53,6 +53,22 @@ body,#root{min-height:100vh;background:#0b1021;font-family:Inter,system-ui,-appl
 .df-chat-shell__input-box{width:100%;padding:10px;border-radius:10px;background:rgba(255,255,255,.02);border:1px dashed rgba(255,255,255,.12);color:#9ca3af;font-size:13px;}
 
 .df-action-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+/* Cursor stability + less “web lag” */
+html, body, #app { cursor: default; }
+* { cursor: inherit; }
+
+/* Never let fades/overlays mess with pointer targeting */
+.df-overlay, .df-screenwipe {
+  pointer-events: none;
+}
+
+/* Prevent accidental hover flicker due to transitions */
+.df-ui * {
+  transition-property: none; /* or restrict to background-color only */
+}
+.df-btn, button {
+  transition: background-color 120ms linear, border-color 120ms linear;
+}
 
 @media (max-width:1024px){
   .df-client-shell__top{grid-template-columns:1fr;}
