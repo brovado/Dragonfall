@@ -77,6 +77,13 @@ html, body, #app { cursor: default; }
 .df-ui a,
 .df-ui [role="button"],
 .df-ui .df-clickable { cursor: pointer !important; }
+/* TEMP: turn off expensive UI effects to confirm repaint cause */
+.df-ui * { 
+  backdrop-filter: none !important;
+  filter: none !important;
+  box-shadow: none !important;
+  transition: none !important;
+}
 
 @media (max-width:1024px){
   .df-client-shell__top{grid-template-columns:1fr;}
