@@ -7,7 +7,7 @@
   DF.PlayWindow = ({ title, subtitle, viewport, overlay, overlayMode = "modal", controls, actions, wipeKey }) =>
     h(
       "div",
-      { className: "df-playwindow df-ui" },
+      { className: "df-playwindow df-ui df-pixel" },
       h(
         "div",
         { className: "df-playwindow__stage" },
@@ -31,22 +31,25 @@
                 className: [
                   "df-playwindow__overlay",
                   overlayMode === "dock" ? "df-playwindow__overlay--dock" : null,
+                  overlayMode === "bare" ? "df-playwindow__overlay--bare" : null,
                 ]
                   .filter(Boolean)
                   .join(" "),
               },
-              h(
-                "div",
-                {
-                  className: [
-                    "df-playwindow__panel",
-                    overlayMode === "dock" ? "df-playwindow__panel--dock" : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" "),
-                },
-                overlay
-              )
+              overlayMode === "bare"
+                ? overlay
+                : h(
+                    "div",
+                    {
+                      className: [
+                        "df-playwindow__panel",
+                        overlayMode === "dock" ? "df-playwindow__panel--dock" : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" "),
+                    },
+                    overlay
+                  )
             )
           : null
       ),

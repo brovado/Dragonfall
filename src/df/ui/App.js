@@ -156,6 +156,7 @@
     });
 
     const reviveToStart=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="dead") return d; const next=withScreen(DF.mkNewGame(Date.now())); next.meta=d.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; setStatus(next,"exploring"); DF.pushLog(next,{type:"system",text:"You wake at the Beacon. The mountain waits."}); primePrepPrompts(next); return next;});
+    const quitToPrep=()=>setState(prev=>{const next=withScreen(DF.mkNewGame(Date.now())); next.meta=prev.meta; setStatus(next,"exploring"); DF.pushLog(next,{type:"system",text:"You step away from the fall, back to preparation."}); primePrepPrompts(next); return next;});
     const metaSpend=(key,cost,apply)=>setState(prev=>{const d=structuredClone(prev); if(d.meta.echoes<cost){DF.pushLog(d,{type:"system",text:"Not enough Echoes."}); return d;} d.meta.echoes-=cost; apply(d); DF.pushLog(d,{type:"system",text:`Beacon upgraded: ${key}.`}); return d;});
 
     const currentNode=state.run.nodeWeb?.nodes.find(n=>n.id===state.run.currentNodeId);
@@ -232,13 +233,13 @@
     const screenProps=({
       PrepScreen:{state},
       PlayScreen:{state},
-      DeadScreen:{state,onMetaSpend:metaSpend,onWake:reviveToStart}
+      DeadScreen:{state,onRetry:hardReset,onQuit:quitToPrep,onWake:reviveToStart}
     })[screenKey]||{state};
     const isDefaultScreen=ScreenComponent===defaultScreens[screenKey];
     const shouldRenderScreen=!!ScreenComponent && (screenKey!=="PlayScreen" || !isDefaultScreen);
     let overlayContent=null;
     let overlayMode="modal";
-    if(shouldRenderScreen){overlayContent=h(ScreenComponent,{key:screenKey,...screenProps}); if(screenKey==="PrepScreen") overlayMode="dock";}
+    if(shouldRenderScreen){overlayContent=h(ScreenComponent,{key:screenKey,...screenProps}); if(screenKey==="PrepScreen") overlayMode="dock"; if(screenKey==="DeadScreen") overlayMode="bare";}
     else if(state.ui.travelOpen){overlayContent=travelOverlay;}
 
     const canTravel=state.phase==="play"&&!state.run.inCombat;
