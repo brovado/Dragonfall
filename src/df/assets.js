@@ -4,6 +4,10 @@
 
   const manifest = {
 images: [
+  { key: "glyph", url: "src/assets/img/glyph.svg", type: "image" },
+      { key: "main_pc",     url: "src/assets/img/main_pc.png",      type: "image" },
+      { key: "starter_kit", url: "src/assets/img/starter_kit.png",  type: "image" },
+      { key: "town_tiles",  url: "src/assets/img/town_tiles.png",   type: "image" },
   { key:"ui_title", url:"assets/img/ui/screens/title.png", type:"image" },
   { key:"ui_gameover", url:"assets/img/ui/screens/screen_gameover.png", type:"image" },
   { key:"ui_transition", url:"assets/img/ui/screens/transition.png", type:"image" },
