@@ -4,17 +4,17 @@
 
   const manifest = {
     images: [
-      { key: "glyph", url: "./src/assets/img/glyph.svg", type: "image",
-      key: "main_pc", url: "./src/assets/img/main_pc.png", type: "image",
-       key: "glyph", url: "./src/assets/img/starter_kit.png", type: "image",
-       key: "glyph", url: "./src/assets/img/town_tiles.png", type: "image",
-      },
+      { key: "glyph",       url: "assets/img/glyph.svg",        type: "image" },
+      { key: "main_pc",     url: "assets/img/main_pc.png",      type: "image" },
+      { key: "starter_kit", url: "assets/img/starter_kit.png",  type: "image" },
+      { key: "town_tiles",  url: "assets/img/town_tiles.png",   type: "image" },
     ],
     audio: [
+      // Keeps the audio system “warm” even if you haven’t added real sfx yet
       { key: "silence", url: "data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=", type: "audio" },
     ],
     data: [
-      { key: "flavor", url: "./src/assets/data/flavor.json", type: "json" },
+      { key: "flavor", url: "assets/data/flavor.json", type: "json" },
     ],
   };
 
@@ -23,10 +23,10 @@
       new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve(img);
-        img.onerror = () =>
-          reject(new Error(`Image failed to load: ${entry.url}`));
+        img.onerror = () => reject(new Error(`Image failed to load: ${entry.url}`));
         img.src = entry.url;
       }),
+
     audio: (entry) =>
       new Promise((resolve, reject) => {
         const audio = new Audio();
@@ -34,22 +34,19 @@
           audio.removeEventListener("canplaythrough", onReady);
           audio.removeEventListener("error", onError);
         };
-        const onReady = () => {
-          cleanup();
-          resolve(audio);
-        };
-        const onError = () => {
-          cleanup();
-          reject(new Error(`Audio failed to load: ${entry.url}`));
-        };
+        const onReady = () => { cleanup(); resolve(audio); };
+        const onError = () => { cleanup(); reject(new Error(`Audio failed to load: ${entry.url}`)); };
+
         audio.addEventListener("canplaythrough", onReady, { once: true });
         audio.addEventListener("error", onError, { once: true });
+        audio.preload = "auto";
         audio.src = entry.url;
         audio.load();
       }),
+
     json: async (entry) => {
-      const res = await fetch(entry.url, { cache: "no-cache" });
-      if (!res.ok) throw new Error(`JSON failed to load: ${entry.url}`);
+      const res = await fetch(entry.url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`JSON failed to load (${res.status}): ${entry.url}`);
       return res.json();
     },
   };
@@ -58,35 +55,31 @@
 
   DF.ASSET_MANIFEST = manifest;
 
-  DF.preloadAssets = async ({
-    manifest: overrideManifest,
-    onProgress,
-    onLog,
-  } = {}) => {
+  DF.preloadAssets = async ({ manifest: overrideManifest, onProgress, onLog } = {}) => {
     const activeManifest = overrideManifest || DF.ASSET_MANIFEST;
     DF.assert(activeManifest, "Asset manifest missing.");
+
     const queue = [
       ...(activeManifest.images || []),
       ...(activeManifest.audio || []),
       ...(activeManifest.data || []),
     ];
-    const total = queue.length;
+
+    const total = queue.length || 1;
     const assets = { images: {}, audio: {}, data: {} };
     let done = 0;
-
-    const notify = (entry) => {
-      done += 1;
-      if (onLog) onLog(`Loaded asset: ${entry.key}`);
-      if (onProgress) onProgress({ done, total, entry });
-    };
 
     for (const entry of queue) {
       const loader = loaders[entry.type];
       DF.assert(loader, `No loader for asset type: ${entry.type}`);
+
       const value = await loader(entry);
       const bucket = buckets[entry.type];
       assets[bucket][entry.key] = value;
-      notify(entry);
+
+      done += 1;
+      if (onLog) onLog(`Loaded asset: ${entry.key}`);
+      if (onProgress) onProgress({ done, total, entry });
     }
 
     DF.assets = assets;
