@@ -40,10 +40,24 @@
     ctx.drawImage(tileset, sx, sy, TILE_SIZE, TILE_SIZE, dx, dy, TILE_SIZE, TILE_SIZE);
   };
 
-  function WorldViewport({ scale = DEFAULT_SCALE }) {
+  function WorldViewport({ scale = DEFAULT_SCALE, nodeWeb, currentNodeId, availableTargets = [], selectedNodeId, onSelectNode }) {
     const canvasRef = React.useRef(null);
     const frameRef = React.useRef(null);
     const [currentScale, setCurrentScale] = React.useState(scale || DEFAULT_SCALE);
+    const reachableSet = React.useMemo(() => new Set(availableTargets || []), [availableTargets]);
+    const nodeLookup = React.useMemo(() => {
+      const map = new Map();
+      (nodeWeb?.nodes || []).forEach((n) => map.set(n.id, n));
+      return map;
+    }, [nodeWeb]);
+    const visibleNodes = React.useMemo(() => {
+      if (!nodeWeb || !nodeWeb.nodes) return [];
+      return (nodeWeb.nodes || []).filter((n) => n.revealed || reachableSet.has(n.id) || n.id === currentNodeId);
+    }, [nodeWeb, reachableSet, currentNodeId]);
+    const visibleEdges = React.useMemo(() => {
+      if (!nodeWeb || !nodeWeb.edges) return [];
+      return (nodeWeb.edges || []).filter((e) => nodeLookup.has(e.a) && nodeLookup.has(e.b));
+    }, [nodeWeb, nodeLookup]);
 
     React.useEffect(() => {
       const canvas = canvasRef.current;
@@ -121,6 +135,57 @@
       height: `${VIEW_HEIGHT * currentScale}px`,
     };
 
+    const renderOverlay = () => {
+      if (!nodeWeb || !visibleNodes.length) return null;
+      return h(
+        "div",
+        { className: "df-map-overlay" },
+        h(
+          "svg",
+          {
+            className: "df-map-overlay__graph",
+            viewBox: "0 0 100 100",
+            preserveAspectRatio: "none",
+          },
+          visibleEdges.map((edge, idx) => {
+            const a = nodeLookup.get(edge.a);
+            const b = nodeLookup.get(edge.b);
+            return h("line", {
+              key: idx,
+              x1: a?.x || 0,
+              y1: a?.y || 0,
+              x2: b?.x || 0,
+              y2: b?.y || 0,
+            });
+          })
+        ),
+        visibleNodes.map((node) => {
+          const isCurrent = node.id === currentNodeId;
+          const isReachable = reachableSet.has(node.id);
+          const isSelected = selectedNodeId && node.id === selectedNodeId;
+          const classes = ["df-map-node"];
+          if (isCurrent) classes.push("df-map-node--current");
+          if (isReachable) classes.push("df-map-node--reachable");
+          if (node.cleared) classes.push("df-map-node--cleared");
+          if (isSelected) classes.push("df-map-node--selected");
+          return h(
+            "button",
+            {
+              key: node.id,
+              className: classes.join(" "),
+              style: { left: `${node.x}%`, top: `${node.y}%` },
+              title: node.site?.name || node.id,
+              onClick: isReachable && typeof onSelectNode === "function" ? () => onSelectNode(node.id) : undefined,
+              disabled: !isReachable,
+              type: "button",
+            },
+            h("span", { className: "df-map-node__dot" }),
+            h("span", { className: "df-map-node__label" }, node.site?.name || node.id)
+          );
+        })
+      );
+    };
+
     return h(
       "div",
       { className: "df-world-viewport" },
@@ -133,7 +198,8 @@
           height: VIEW_HEIGHT,
           style: canvasStyle,
           className: "df-world-viewport__canvas",
-        })
+        }),
+        renderOverlay()
       )
     );
   }

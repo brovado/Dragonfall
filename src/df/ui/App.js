@@ -8,6 +8,10 @@
     };
     const withScreen=(draft)=>{
       if(!draft.screen) draft.screen=screenForPhase(draft.phase);
+      if(!draft.run) draft.run={status:"exploring"};
+      if(!draft.run.status) draft.run.status="exploring";
+      if(!draft.ui) draft.ui={};
+      if(typeof draft.ui.travelOpen!=="boolean") draft.ui.travelOpen=false;
       return draft;
     };
 
@@ -20,6 +24,7 @@
     const styleObj=useMemo(()=>DF.WEAPONS.flatMap(w=>w.styles).find(s=>s.key===state.player.style)||null,[state.player.style]);
     const elementObj=useMemo(()=>DF.ELEMENTS.find(e=>e.key===state.player.element)||null,[state.player.element]);
     const skills=useMemo(()=>DF.skillListForBuild(state.player.weapon,state.player.style,state.player.element,state.player.crossStyle),[state.player.weapon,state.player.style,state.player.element,state.player.crossStyle]);
+    const travelOptions=useMemo(()=>reachableNodes(state.run.nodeWeb,state.run.currentNodeId),[state.run.nodeWeb,state.run.currentNodeId]);
 
     const showToast=(msg)=>{setToast(msg); if(toastTimer.current) clearTimeout(toastTimer.current); toastTimer.current=setTimeout(()=>setToast(null),2200);};
 
@@ -31,33 +36,57 @@
       d.player.hpMax=hpBase; d.player.hp=DF.clamp(d.player.hp,0,hpBase);
       d.player.title=DF.titleFromBuild(d.player.weapon,d.player.style,d.player.element,d.player.crossStyle);
     };
+    const reachableNodes=(web,currentId)=>{
+      if(!web||!currentId) return [];
+      const out=new Set();
+      for(const e of web.edges||[]){
+        if(e.a===currentId) out.add(e.b);
+        if(e.b===currentId) out.add(e.a);
+      }
+      return Array.from(out);
+    };
+    const setStatus=(draft,status)=>{ if(!draft.run) return; draft.run.status=status; };
 
     const saveGame=()=>{try{DF.saveGame(state);showToast("Saved.");}catch{showToast("Save failed.");}};
     const loadGame=()=>{try{const parsed=DF.loadGame(); if(!parsed) return showToast("No save found."); const next=withScreen(structuredClone(parsed)); setState(next); showToast("Loaded.");}catch{showToast("Load failed.");}};
     const clearSave=()=>{try{DF.clearSave();showToast("Save cleared.");}catch{showToast("Could not clear.");}};
-    const hardReset=()=>{const next=withScreen(DF.mkNewGame(Date.now())); next.meta=state.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; DF.pushLog(next,{type:"system",text:"New run started."}); setState(next); showToast("New run.");};
+    const hardReset=()=>{const next=withScreen(DF.mkNewGame(Date.now())); next.meta=state.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; setStatus(next,"exploring"); DF.pushLog(next,{type:"system",text:"New run started."}); setState(next); showToast("New run.");};
 
     useEffect(()=>{setState(prev=>{const d=structuredClone(prev); DF.pushLog(d,{type:"story",text:"Dragons rule the skies. Cities survive as beacons. The Mountain Expanse pays in blood and salvage."}); DF.pushLog(d,{type:"story",text:"Promotions require XP. Only extracted goods endure."}); return d;});},[]);
 
     const chooseWeapon=(weaponKey)=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.player.weapon=weaponKey; recalcPlayer(d); d.phase="chooseStyle"; d.screen=screenForPhase(d.phase); DF.pushLog(d,{type:"system",text:`Armament chosen: ${weaponKey.toUpperCase()}.`}); return d;});
-    const chooseStyle=(styleKey)=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.player.style=styleKey; recalcPlayer(d); d.phase="play"; d.screen=screenForPhase(d.phase); d.run.depth=1; const rng=DF.mulberry32(d.rngSeed^0xabc); d.run.nodeWeb=DF.createNodeWeb(rng); d.run.currentNodeId="n0"; const start=d.run.nodeWeb.nodes.find(n=>n.id==="n0"); d.run.site=start?.site||DF.pickSite(rng); d.run.danger="unknown"; d.ui.showClassTree=false; DF.pushLog(d,{type:"system",text:`Style chosen: ${styleKey.toUpperCase()}.`}); DF.pushLog(d,{type:"story",text:"You are torn into light. Then—cold stone, thin air, and the smell of ash."}); return d;});
+    const chooseStyle=(styleKey)=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.player.style=styleKey; recalcPlayer(d); d.phase="play"; d.screen=screenForPhase(d.phase); d.run.depth=1; const rng=DF.mulberry32(d.rngSeed^0xabc); d.run.nodeWeb=DF.createNodeWeb(rng); d.run.currentNodeId="n0"; const start=d.run.nodeWeb.nodes.find(n=>n.id==="n0"); d.run.site=start?.site||DF.pickSite(rng); d.run.danger="unknown"; setStatus(d,"exploring"); d.ui.showClassTree=false; DF.pushLog(d,{type:"system",text:`Style chosen: ${styleKey.toUpperCase()}.`}); DF.pushLog(d,{type:"story",text:"You are torn into light. Then—cold stone, thin air, and the smell of ash."}); return d;});
 
     const takeDamage=(d,amount,reason)=>{d.player.hp=DF.clamp(d.player.hp-amount,0,d.player.hpMax); DF.pushLog(d,{type:"system",text:`You take ${amount} damage (${reason}).`}); if(d.player.hp<=0){d.phase="dead"; d.screen=screenForPhase(d.phase); const echoes=2+d.run.depth+Math.floor(d.player.gold/3); d.meta.echoes+=echoes; DF.pushLog(d,{type:"story",text:"☠️ You fall. The mountain keeps what you failed to extract."}); DF.pushLog(d,{type:"system",text:`You gain ${echoes} Echoes at the Beacon.`});}};
-    const ensureEncounter=()=>setState(prev=>{const d=structuredClone(prev); if(d.run.inCombat) return prev; const rng=DF.mulberry32(d.rngSeed^d.run.depth^0xdead); const enemy=DF.pickEnemy(rng); d.run.inCombat=true; d.run.enemy={...enemy}; d.run.enemyHP=enemy.hp; DF.pushLog(d,{type:"story",text:`⚔️ ${enemy.name} appears. ${enemy.desc}`}); return d;});
+    const ensureEncounter=(draft)=>{
+      const spawn=(d)=>{
+        if(d.run.inCombat) return d;
+        const rng=DF.mulberry32(d.rngSeed^d.run.depth^0xdead);
+        const enemy=DF.pickEnemy(rng);
+        d.run.inCombat=true; d.ui.travelOpen=false; setStatus(d,"in_combat");
+        d.run.enemy={...enemy}; d.run.enemyHP=enemy.hp;
+        DF.pushLog(d,{type:"story",text:`⚔️ ${enemy.name} appears. ${enemy.desc}`});
+        return d;
+      };
+      if(draft) return spawn(draft);
+      setState(prev=>{const d=structuredClone(prev); if(d.phase!=="play") return prev; return spawn(d);});
+    };
     const enemyTurn=(d,ctx)=>DF.resolveEnemyTurn(d,takeDamage,ctx);
 
-    const endCombatWin=(d)=>{const rng=DF.mulberry32(d.rngSeed^d.run.depth^0xbeef); const loot=d.run.site?.loot?d.run.site.loot[Math.floor(rng()*d.run.site.loot.length)]:"Scrap"; d.player.inventory.push(loot); d.player.gold+=1+Math.floor(rng()*3); const xp=2; d.player.xp+=xp; d.run.inCombat=false; d.run.enemy=null; d.run.enemyHP=0; d.run.danger="cleared"; const node=d.run.nodeWeb?.nodes.find(n=>n.id===d.run.currentNodeId); if(node) node.cleared=true; DF.pushLog(d,{type:"system",text:`Victory. Loot gained: ${loot}. +${xp} XP.`}); if(d.player.promoTier===0 && d.player.xp>=d.player.nextPromoAt){d.ui.showPromotion=true; DF.pushLog(d,{type:"story",text:"Something in you shifts. A new discipline is ready to bind."});}};
+    const endCombatWin=(d)=>{const rng=DF.mulberry32(d.rngSeed^d.run.depth^0xbeef); const loot=d.run.site?.loot?d.run.site.loot[Math.floor(rng()*d.run.site.loot.length)]:"Scrap"; d.player.inventory.push(loot); d.player.gold+=1+Math.floor(rng()*3); const xp=2; d.player.xp+=xp; d.run.inCombat=false; d.run.enemy=null; d.run.enemyHP=0; d.run.danger="cleared"; setStatus(d,"exploring"); const node=d.run.nodeWeb?.nodes.find(n=>n.id===d.run.currentNodeId); if(node) node.cleared=true; DF.pushLog(d,{type:"system",text:`Victory. Loot gained: ${loot}. +${xp} XP.`}); if(d.player.promoTier===0 && d.player.xp>=d.player.nextPromoAt){d.ui.showPromotion=true; DF.pushLog(d,{type:"story",text:"Something in you shifts. A new discipline is ready to bind."});}};
 
     const choosePromotionElement=(k)=>setState(prev=>{const d=structuredClone(prev); d.player.element=k; d.player.crossStyle=null; d.player.promoTier=1; d.ui.showPromotion=false; recalcPlayer(d); DF.pushLog(d,{type:"system",text:`Promotion: Affinity ${k.toUpperCase()}.`}); return d;});
     const choosePromotionCross=(k)=>setState(prev=>{const d=structuredClone(prev); d.player.crossStyle=k; d.player.element=null; d.player.promoTier=1; d.ui.showPromotion=false; recalcPlayer(d); DF.pushLog(d,{type:"system",text:`Promotion: Cross-Training ${k.toUpperCase()}.`}); return d;});
 
-    const moveToNode=(id)=>setState(prev=>{const d=structuredClone(prev); const web=d.run.nodeWeb; if(!web) return prev; const cur=d.run.currentNodeId; if(cur===id) return prev; const adjacent=web.edges.some(e=>(e.a===cur&&e.b===id)||(e.b===cur&&e.a===id)); if(!adjacent){DF.pushLog(d,{type:"system",text:"You cannot reach that node from here."}); return d;} d.run.currentNodeId=id; const node=web.nodes.find(n=>n.id===id); if(node){d.run.site=node.site; d.run.depth+=1; for(const e of web.edges){ if(e.a===id){const nb=web.nodes.find(x=>x.id===e.b); if(nb) nb.revealed=true;} if(e.b===id){const nb=web.nodes.find(x=>x.id===e.a); if(nb) nb.revealed=true;} } d.run.danger=node.kind==="fight"?"unknown":"cleared"; DF.pushLog(d,{type:"story",text:`You move to: ${node.site.name}.`}); DF.pushLog(d,{type:"story",text:node.site.tone}); if(node.kind==="station") DF.pushLog(d,{type:"system",text:"A dormant relay sits here. You may Extract."}); } return d;});
+    const moveToNode=(id)=>setState(prev=>{const d=structuredClone(prev); if(d.run.inCombat){DF.pushLog(d,{type:"system",text:"You cannot travel during combat."}); return d;} const web=d.run.nodeWeb; if(!web) return prev; const cur=d.run.currentNodeId; if(cur===id){d.ui.travelOpen=false; setStatus(d,"exploring"); return d;} const adjacent=web.edges.some(e=>(e.a===cur&&e.b===id)||(e.b===cur&&e.a===id)); if(!adjacent){DF.pushLog(d,{type:"system",text:"You cannot reach that node from here."}); return d;} d.run.currentNodeId=id; d.ui.selectedNode=id; d.ui.travelOpen=false; const node=web.nodes.find(n=>n.id===id); if(node){d.run.site=node.site; d.run.depth+=1; for(const e of web.edges){ if(e.a===id){const nb=web.nodes.find(x=>x.id===e.b); if(nb) nb.revealed=true;} if(e.b===id){const nb=web.nodes.find(x=>x.id===e.a); if(nb) nb.revealed=true;} } d.run.danger=node.kind==="fight"?"unknown":"cleared"; setStatus(d,"exploring"); DF.pushLog(d,{type:"story",text:`You move to: ${node.site.name}.`}); DF.pushLog(d,{type:"story",text:node.site.tone}); if(node.kind==="station") DF.pushLog(d,{type:"system",text:"A dormant relay sits here. You may Extract."}); } return d;});
 
-    const rest=()=>setState(prev=>{const d=structuredClone(prev); const rng=DF.mulberry32(d.rngSeed^d.run.depth^0x3333^Date.now()); const heal=2; d.player.hp=DF.clamp(d.player.hp+heal,0,d.player.hpMax); DF.pushLog(d,{type:"system",text:`You rest (+${heal} HP).`}); if(rng()<0.5) ensureEncounter(); else DF.pushLog(d,{type:"story",text:"The wind passes. No footsteps."}); return d;});
+    const rest=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="play"||d.run.inCombat){DF.pushLog(d,{type:"system",text:"You cannot rest right now."}); return d;} setStatus(d,"resting"); const rng=DF.mulberry32(d.rngSeed^d.run.depth^0x3333^Date.now()); const heal=2; d.player.hp=DF.clamp(d.player.hp+heal,0,d.player.hpMax); DF.pushLog(d,{type:"system",text:`You rest (+${heal} HP).`}); if(rng()<0.5){ensureEncounter(d); return d;} DF.pushLog(d,{type:"story",text:"The wind passes. No footsteps."}); setStatus(d,"exploring"); return d;});
+    const toggleTravelOverlay=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="play") return d; if(d.run.inCombat){DF.pushLog(d,{type:"system",text:"Resolve combat before traveling."}); return d;} d.ui.travelOpen=!d.ui.travelOpen; setStatus(d,d.ui.travelOpen?"traveling":"exploring"); return d;});
+    const closeTravelOverlay=()=>setState(prev=>{const d=structuredClone(prev); d.ui.travelOpen=false; if(!d.run.inCombat) setStatus(d,"exploring"); return d;});
     const buildStation=()=>setState(prev=>{const d=structuredClone(prev); const idx=d.player.inventory.indexOf("Relay Parts"); if(idx===-1){DF.pushLog(d,{type:"system",text:"You lack Relay Parts to build a Drop Station."}); return d;} d.player.inventory.splice(idx,1); d.player.stationBuilt+=1; DF.pushLog(d,{type:"story",text:"You assemble a crude Drop Station. A faint ward flickers to life."}); DF.pushLog(d,{type:"system",text:"You can now Extract here."}); return d;});
     const extract=()=>setState(prev=>{const d=structuredClone(prev); const items=d.player.inventory.splice(0); d.player.extracted.push(...items); DF.pushLog(d,{type:"system",text:`Extraction complete. Saved ${items.length} item(s).`}); return d;});
 
-    const combatAction=(key)=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="play"||!d.run.inCombat||!d.run.enemy) return prev; const enemy=d.run.enemy; const rng=DF.mulberry32(d.rngSeed^d.run.depth^0x2222^Date.now()); const atk=DF.computeAttackMod(d.player.stats,d.player.weapon); const def=DF.computeDefenseMod(d.player.stats,d.player.style);
+    const combatAction=(key)=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="play"||!d.run.inCombat||!d.run.enemy) return prev; setStatus(d,"in_combat"); const enemy=d.run.enemy; const rng=DF.mulberry32(d.rngSeed^d.run.depth^0x2222^Date.now()); const atk=DF.computeAttackMod(d.player.stats,d.player.weapon); const def=DF.computeDefenseMod(d.player.stats,d.player.style);
       const doAttack=(label,bonus,min,max,onMiss)=>{const check=DF.rollCheck(rng,label,atk+bonus,enemy.dr); DF.pushLog(d,{type:"roll",text:`${check.label}: d20 ${check.d20} ${DF.fmtBonus(check.statBonus)} = ${check.total} vs DR ${check.dr} → ${check.success?"SUCCESS":"FAIL"}`});
         if(check.success){let dmg=DF.rollDamage(rng,min,max); if(check.d20===20){dmg+=1; if(d.player.element==="fire") dmg+=1; DF.pushLog(d,{type:"system",text:"Critical impact."});} d.run.enemyHP=Math.max(0,d.run.enemyHP-dmg); DF.pushLog(d,{type:"system",text:`Enemy takes ${dmg} damage.`}); if(d.run.enemyHP<=0){endCombatWin(d); return;}} else {if(onMiss) onMiss();}
         if(d.phase!=="dead") enemyTurn(d,"combat");
@@ -77,7 +106,7 @@
       return d;
     });
 
-    const reviveToStart=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="dead") return d; const next=withScreen(DF.mkNewGame(Date.now())); next.meta=d.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; DF.pushLog(next,{type:"system",text:"You wake at the Beacon. The mountain waits."}); return next;});
+    const reviveToStart=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="dead") return d; const next=withScreen(DF.mkNewGame(Date.now())); next.meta=d.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; setStatus(next,"exploring"); DF.pushLog(next,{type:"system",text:"You wake at the Beacon. The mountain waits."}); return next;});
     const metaSpend=(key,cost,apply)=>setState(prev=>{const d=structuredClone(prev); if(d.meta.echoes<cost){DF.pushLog(d,{type:"system",text:"Not enough Echoes."}); return d;} d.meta.echoes-=cost; apply(d); DF.pushLog(d,{type:"system",text:`Beacon upgraded: ${key}.`}); return d;});
 
     const currentNode=state.run.nodeWeb?.nodes.find(n=>n.id===state.run.currentNodeId);
@@ -86,6 +115,13 @@
     useEffect(()=>{ if(state.phase!=="play") return; if(state.run.inCombat) return; if(state.run.danger==="unknown"&&currentNode?.kind==="fight") ensureEncounter(); },[state.phase,state.run.inCombat,state.run.danger,state.run.currentNodeId]);
 
     const subtitle=state.phase==="dead"?"☠️ Fallen":state.phase==="play"?"In the Mountain":"Preparation";
+    const modeLabel=(()=>{
+      if(state.phase!=="play") return subtitle;
+      if(state.run.inCombat) return "In Combat";
+      if(state.ui.travelOpen||state.run.status==="traveling") return "Traveling";
+      if(state.run.status==="resting") return "Resting";
+      return "Exploring";
+    })();
     const {Card,Pill,Button}=DF;
 
     const toggleLoadoutOverlay=()=>setState(prev=>({...prev,ui:{...prev.ui,showClassTree:!prev.ui.showClassTree}}));
@@ -104,10 +140,19 @@
     const worldCard=h("div",{className:"df-viewport-card df-playwindow__world"},
       h("div",{className:"df-viewport-card__frame"},
         h("div",{className:"df-viewport-card__title"}, state.phase==="dead"?"Beacon View":"Field View"),
-        h("div",{className:"df-viewport-card__canvas"},h(DF.WorldViewport,{scale:4})),
+        h("div",{className:"df-viewport-card__canvas"},
+          h(DF.WorldViewport,{
+            scale:4,
+            nodeWeb:state.run.nodeWeb,
+            currentNodeId:state.run.currentNodeId,
+            availableTargets:travelOptions,
+            selectedNodeId:state.ui.selectedNode,
+            onSelectNode:(id)=>moveToNode(id)
+          })
+        ),
         h("div",{className:"df-viewport-card__hint"},
           h("div",{className:"df-viewport-card__hint-main"},latestStory),
-          h("div",{className:"df-viewport-card__hint-sub"},"Pixel viewport scales to fit")
+          h("div",{className:"df-viewport-card__hint-sub"},state.run.site?.name||"Pixel viewport scales to fit")
         )
       )
     );
@@ -116,6 +161,7 @@
       h("div",{className:"df-panel__section-title"},"Site Intel"),
       h("div",{className:"df-info-grid"},
         h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Phase"),h("div",{className:"df-info-value"},state.phase.toUpperCase())),
+        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"State"),h("div",{className:"df-info-value"},modeLabel)),
         h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Danger"),h("div",{className:"df-info-value"},state.run.danger||"calm")),
         h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Depth"),h("div",{className:"df-info-value"},state.run.depth||0)),
         h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Region"),h("div",{className:"df-info-value"},state.run.region||"Unknown"))
@@ -143,6 +189,13 @@
       h("div",{className:"df-skill-list"},skills.map(s=>h("div",{key:s.key,className:"df-skill-card"},h("div",{className:"df-skill-card__top"},h("div",{className:"df-skill-card__title"},s.name),h("span",{className:"df-skill-card__kind"},s.kind)),h("div",{className:"df-skill-card__desc"},s.desc)))),
       h("div",{className:"df-panel__note"},"Loadout overlay lives inside the play window for class changes and confirmations.")
     );
+    const travelOverlay=state.ui.travelOpen?h(DF.TravelOverlay,{
+      currentNode,
+      options:(state.run.nodeWeb?.nodes||[]).filter(n=>travelOptions.includes(n.id)),
+      allNodes:state.run.nodeWeb?.nodes||[],
+      onClose:closeTravelOverlay,
+      onTravel:moveToNode
+    }):null;
 
     const screenKey=state.screen||screenForPhase(state.phase);
     const defaultScreens={PrepScreen:DF.PrepScreen,PlayScreen:DF.PlayScreen,DeadScreen:DF.DeadScreen};
@@ -155,8 +208,12 @@
     })[screenKey]||{state};
     const isDefaultScreen=ScreenComponent===defaultScreens[screenKey];
     const shouldRenderScreen=!!ScreenComponent && (screenKey!=="PlayScreen" || !isDefaultScreen);
-    const overlayContent=shouldRenderScreen?h(ScreenComponent,{key:screenKey,...screenProps}):(state.ui.showClassTree?loadoutOverlay:null);
+    let overlayContent=null;
+    if(state.ui.travelOpen) overlayContent=travelOverlay;
+    else if(shouldRenderScreen) overlayContent=h(ScreenComponent,{key:screenKey,...screenProps});
+    else if(state.ui.showClassTree) overlayContent=loadoutOverlay;
 
+    const canTravel=state.phase==="play"&&!state.run.inCombat;
     const actionButtons=(()=>{
       if(state.phase==="dead") return [
         {key:"wake",label:"Wake at Beacon",hint:"1",onClick:reviveToStart}
@@ -164,23 +221,22 @@
       if(state.phase!=="play") return [
         {key:"loadout",label:"Loadout Overlay",hint:"1",onClick:toggleLoadoutOverlay}
       ];
-      if(state.run.inCombat) return [
-        {key:"attack",label:"Attack",hint:"1",onClick:()=>combatAction("attack")},
-        {key:"defend",label:"Brace",hint:"2",onClick:()=>combatAction("defend")},
-        {key:"maneuver",label:"Maneuver",hint:"3",onClick:()=>combatAction("maneuver")},
-        {key:"aim",label:"Aim",hint:"4",onClick:()=>combatAction("aim")},
-        {key:"dash",label:"Dash",hint:"5",onClick:()=>combatAction("dash")}
-      ];
+      const contextAction=state.run.inCombat
+        ? {key:"brace",label:"Brace",hint:"5",onClick:()=>combatAction("defend")}
+        : canExtractHere
+          ? {key:"extract",label:"Extract",hint:"5",onClick:extract}
+          : {key:"build",label:"Build Station",hint:"5",onClick:buildStation};
       return [
-        {key:"rest",label:"Rest",hint:"1",onClick:rest},
-        {key:"build",label:"Build Station",hint:"2",onClick:buildStation},
-        {key:"extract",label:"Extract",hint:"3",onClick:extract},
-        {key:"loadout",label:state.ui.showClassTree?"Hide Loadout":"Loadout",hint:"4",onClick:toggleLoadoutOverlay}
+        {key:"attack",label:"Attack",hint:"1",onClick:()=>combatAction("attack"),disabled:!state.run.inCombat},
+        {key:"rest",label:"Rest",hint:"2",onClick:rest,disabled:state.run.inCombat},
+        {key:"travel",label:state.ui.travelOpen?"Close Travel":"Travel",hint:"3",onClick:toggleTravelOverlay,disabled:!canTravel&& !state.ui.travelOpen},
+        {key:"inventory",label:state.ui.showClassTree?"Hide Loadout":"Inventory",hint:"4",onClick:toggleLoadoutOverlay,disabled:state.phase!=="play"},
+        {...contextAction,disabled:contextAction.key!=="brace"&&state.run.inCombat}
       ];
     })();
 
     const playHeaderTitle=state.phase==="dead"?"Beacon":state.run.site?.name||"Arcane Run";
-    const playHeaderSubtitle=state.phase==="play"?(state.run.inCombat?"In Combat":"Exploration")+` • Depth ${state.run.depth||1}`:subtitle;
+    const playHeaderSubtitle=state.phase==="play"?`${modeLabel} • Depth ${state.run.depth||1}`:subtitle;
     const stageControls=[h(Button,{variant:"ghost",key:"loadout",onClick:toggleLoadoutOverlay},state.ui.showClassTree?"Hide Loadout":"Show Loadout")];
 
     const sidebarContent=[

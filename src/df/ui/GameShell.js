@@ -24,11 +24,13 @@
         ),
         h("div",{className:"df-client-shell__body"},
           h("div",{className:"df-body__grid"},
-            h("div",{className:"df-body__viewport"}, viewport||children),
+            h("div",{className:"df-body__main"},
+              h("div",{className:"df-body__viewport"}, viewport||children),
+              bottom?h("div",{className:"df-body__chat"},bottom):null
+            ),
             h("div",{className:"df-body__sidebar"}, safeSidebar.map((s,i)=>h("div",{key:i,className:"df-sidebar__panel"},s)))
           )
-        ),
-        h("div",{className:"df-client-shell__bottom"}, bottom||null)
+        )
       )
     );
   };
