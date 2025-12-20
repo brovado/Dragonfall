@@ -469,6 +469,13 @@
     }, [state.mode]);
 
     const site = getSiteById(state.siteId);
+    const WorldViewport = DF.WorldViewport;
+    const worldLog = (props.state && props.state.run && Array.isArray(props.state.run.log))
+      ? props.state.run.log
+      : [];
+    const latestStory = worldLog.find((l) => l && l.type === "story") || worldLog[0] || null;
+    const worldMessage = (latestStory && latestStory.text) || "The mountain waits.";
+    const WORLD_VIEWPORT_SCALE = 4;
 
     const Card = ({ title, children }) =>
       React.createElement(
@@ -637,6 +644,21 @@
           "div",
           { className: "text-xs opacity-70" },
           `Danger ${site.danger || 1}`
+        )
+      ),
+
+      React.createElement(
+        "div",
+        { className: "df-world-panel" },
+        React.createElement("div", { className: "df-world-panel__title" }, "Field View"),
+        WorldViewport
+          ? React.createElement(WorldViewport, { scale: WORLD_VIEWPORT_SCALE })
+          : React.createElement("div", { className: "text-sm opacity-70" }, "Loading viewport…"),
+        React.createElement(
+          "div",
+          { className: "df-world-message" },
+          React.createElement("div", { className: "df-world-message__text" }, worldMessage),
+          React.createElement("div", { className: "df-world-message__hint" }, "Press [Enter] / [Space]")
         )
       ),
 
