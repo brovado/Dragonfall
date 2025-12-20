@@ -3,30 +3,30 @@
   if (!DF) return;
 
   const manifest = {
-images: [
-  { key: "glyph",       url: "src/assets/img/glyph.svg", type: "image" },
-  { key: "main_pc",     url: "src/assets/img/main_pc.png", type: "image" },
-  { key: "starter_kit", url: "src/assets/img/starter_kit.png", type: "image" },
-  { key: "town_tiles",  url: "src/assets/img/town_tiles.png", type: "image" },
+    images: [
+      { key: "glyph", url: "src/assets/img/glyph.svg", type: "image" },
+      { key: "main_pc", url: "src/assets/img/main_pc.png", type: "image" },
+      { key: "starter_kit", url: "src/assets/img/starter_kit.png", type: "image" },
+      { key: "town_tiles", url: "src/assets/img/town_tiles.png", type: "image" },
 
-  { key:"ui_title",      url:"src/assets/img/screens/title.png", type:"image" },
-  { key:"ui_gameover",   url:"src/assets/img/screens/screen_gameover.png", type:"image" },
-  { key:"ui_transition", url:"src/assets/img/screens/transition.png", type:"image" },
-  { key:"ui_beacon",     url:"src/assets/img/screens/screen_beacon.png", type:"image" },
+      { key: "ui_title", url: "src/assets/img/screens/title.png", type: "image" },
+      { key: "ui_gameover", url: "src/assets/img/screens/screen_gameover.png", type: "image" },
+      { key: "ui_transition", url: "src/assets/img/screens/transition.png", type: "image" },
+      { key: "ui_beacon", url: "src/assets/img/screens/screen_beacon.png", type: "image" },
 
-  { key:"ui_icons",   url:"src/assets/img/kit/ui_icons_basics.png", type:"image" },
-  { key:"ui_input",   url:"src/assets/img/kit/ui_input.png", type:"image" },
-  { key:"ui_windows", url:"src/assets/img/kit/ui_windows.png", type:"image" },
-  { key:"ui_dice",    url:"src/assets/img/kit/ui_dice.png", type:"image" },
-  { key:"ui_hud",     url:"src/assets/img/kit/ui_hud.png", type:"image" },
-],
+      { key: "ui_icons", url: "src/assets/img/kit/ui_icons_basics.png", type: "image" },
+      { key: "ui_input", url: "src/assets/img/kit/ui_input.png", type: "image" },
+      { key: "ui_windows", url: "src/assets/img/kit/ui_windows.png", type: "image" },
+      { key: "ui_dice", url: "src/assets/img/kit/ui_dice.png", type: "image" },
+      { key: "ui_hud", url: "src/assets/img/kit/ui_hud.png", type: "image" },
+    ],
 
     audio: [
       // Keeps the audio system “warm” even if you haven’t added real sfx yet
       { key: "silence", url: "data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=", type: "audio" },
     ],
     data: [
-      { key: "flavor", url: "src/src/assets/data/flavor.json", type: "json" },
+      { key: "flavor", url: "src/assets/data/flavor.json", type: "json" },
     ],
   };
 
@@ -67,7 +67,7 @@ images: [
 
   DF.ASSET_MANIFEST = manifest;
 
-  DF.preloadsrc/assets = async ({ manifest: overrideManifest, onProgress, onLog } = {}) => {
+  DF.preloadAssets = async ({ manifest: overrideManifest, onProgress, onLog } = {}) => {
     const activeManifest = overrideManifest || DF.ASSET_MANIFEST;
     DF.assert(activeManifest, "Asset manifest missing.");
 
@@ -78,7 +78,7 @@ images: [
     ];
 
     const total = queue.length || 1;
-    const src/assets = { images: {}, audio: {}, data: {} };
+    const assets = { images: {}, audio: {}, data: {} };
     let done = 0;
 
     for (const entry of queue) {
@@ -87,14 +87,14 @@ images: [
 
       const value = await loader(entry);
       const bucket = buckets[entry.type];
-      src/assets[bucket][entry.key] = value;
+      assets[bucket][entry.key] = value;
 
       done += 1;
       if (onLog) onLog(`Loaded asset: ${entry.key}`);
       if (onProgress) onProgress({ done, total, entry });
     }
 
-    DF.src/assets = src/assets;
-    return src/assets;
+    DF.assets = assets;
+    return assets;
   };
 })();
