@@ -4,7 +4,11 @@
 
   const manifest = {
     images: [
-      { key: "glyph", url: "./src/assets/img/glyph.svg", type: "image" },
+      { key: "glyph", url: "./src/assets/img/glyph.svg", type: "image",
+      key: "main_pc", url: "./src/assets/img/main_pc.png", type: "image",
+       key: "glyph", url: "./src/assets/img/starter_kit.png", type: "image",
+       key: "glyph", url: "./src/assets/img/town_tiles.png", type: "image",
+      },
     ],
     audio: [
       { key: "silence", url: "data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=", type: "audio" },
