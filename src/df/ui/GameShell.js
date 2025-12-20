@@ -5,7 +5,7 @@
     const clock=useMemo(()=>time.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),[time]);
     useEffect(()=>{const id=setInterval(()=>setTime(new Date()),1000); return ()=>clearInterval(id);},[]);
     const safeHud=Array.isArray(hudPills)?hudPills:[]; const safeSidebar=Array.isArray(sidebar)?sidebar:[sidebar].filter(Boolean);
-    return h("div",{className:"df-client-shell"},
+    return h("div",{className:"df-client-shell df-theme"},
       h("div",{className:"df-client-shell__bg","aria-hidden":"true"}),
       h("div",{className:"df-client-shell__frame"},
         h("div",{className:"df-client-shell__top"},

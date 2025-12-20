@@ -113,10 +113,16 @@
         h(Button,{variant:"ghost",onClick:buildStation},"Build Station"),
         h(Button,{variant:"ghost",onClick:extract},"Extract")
       ),
-      h("div",{className:"text-xs text-white/50 mt-2"},"Movement + combat hooks stay intact; UI is now shell-based.")
+      h("div",{className:"df-panel__note"},"Movement + combat hooks stay intact; UI is now shell-based.")
     );
 
-    const inventoryPanel=h(Card,{title:"Inventory",subtitle:"Equipment preview"},h("div",{className:"text-sm text-white/70"},"Inventory UI coming soon. Extracted goods persist."),h("div",{className:"mt-2 flex gap-2 flex-wrap"},(state.player.inventory||[]).slice(-4).map((i,idx)=>h(Pill,{key:idx},i||"Item"))));
+    const slotGrid=Array.from({length:20});
+    const inventoryPanel=h(Card,{title:"Inventory",subtitle:"Equipment preview"},
+      h("div",{className:"df-slot-grid"},
+        slotGrid.map((_,idx)=>h("div",{key:idx,className:"df-slot"},(state.player.inventory||[])[idx]?h("span",{className:"df-slot__item"},(state.player.inventory||[])[idx]):null))
+      ),
+      h("div",{className:"df-panel__note"},"Extracted goods persist across runs. Slots are a preview.")
+    );
 
     const prepSidebar=[
       h(Card,{key:"prep",title:"Loadout",subtitle:"Choose how you start"},h(DF.PrepScreen,{state,weaponObj,onChooseWeapon:chooseWeapon,onChooseStyle:chooseStyle,onToggleClassTree:()=>setState(p=>({...p,ui:{...p.ui,showClassTree:!p.ui.showClassTree}}))})),
@@ -140,7 +146,7 @@
     const viewportContent=state.phase==="play"?viewportPlay:state.phase==="dead"?viewportSplash("Beacon Silence","You fell in the mountain. Return stronger."):viewportSplash("Arcane Run","Dragons own the sky. Promotions require XP. Only extracted goods endure.");
     const sidebarContent=state.phase==="play"?playSidebar:state.phase==="dead"?deadSidebar:prepSidebar;
 
-    return h("div",{className:"min-h-screen text-white"},
+    return h("div",{className:"df-app"},
       h(DF.GameShell,{
         title:"Dragonfall",
         subtitle:subtitle,
