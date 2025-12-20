@@ -69,6 +69,14 @@ html, body, #app { cursor: default; }
 .df-btn, button {
   transition: background-color 120ms linear, border-color 120ms linear;
 }
+/* Force stable cursor everywhere */
+.df-ui, .df-ui * { cursor: default !important; }
+
+/* Only explicit interactive items get pointer */
+.df-ui button,
+.df-ui a,
+.df-ui [role="button"],
+.df-ui .df-clickable { cursor: pointer !important; }
 
 @media (max-width:1024px){
   .df-client-shell__top{grid-template-columns:1fr;}
