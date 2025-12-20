@@ -4,21 +4,23 @@
 
   const manifest = {
 images: [
-  { key: "glyph", url: "src/assets/img/glyph.svg", type: "image" },
-      { key: "main_pc",     url: "src/src/assets/img/main_pc.png",      type: "image" },
-      { key: "starter_kit", url: "src/src/assets/img/starter_kit.png",  type: "image" },
-      { key: "town_tiles",  url: "src/src/assets/img/town_tiles.png",   type: "image" },
-  { key:"ui_title", url:"src/src/assets/img/screens/title.png", type:"image" },
-  { key:"ui_gameover", url:"src/assets/img/screens/screen_gameover.png", type:"image" },
-  { key:"ui_transition", url:"src/assets/img/screens/transition.png", type:"image" },
-  { key:"ui_beacon", url:"src/assets/img/screens/screen_beacon.png", type:"image" },
+  { key: "glyph",       url: "src/assets/img/glyph.svg", type: "image" },
+  { key: "main_pc",     url: "src/assets/img/main_pc.png", type: "image" },
+  { key: "starter_kit", url: "src/assets/img/starter_kit.png", type: "image" },
+  { key: "town_tiles",  url: "src/assets/img/town_tiles.png", type: "image" },
 
-  { key:"ui_icons", url:"src/assets/img/kit_icons_basics.png", type:"image" },
-  { key:"ui_input", url:"src/assets/img/kit_input.png", type:"image" },
-  { key:"ui_windows", url:"src/assets/img/kit_windows.png", type:"image" },
-  { key:"ui_dice", url:"src/assets/img/kit_dice.png", type:"image" },
-  { key:"ui_hud", url:"src/assets/img/kit_hud.png", type:"image" },
+  { key:"ui_title",      url:"src/assets/img/screens/title.png", type:"image" },
+  { key:"ui_gameover",   url:"src/assets/img/screens/screen_gameover.png", type:"image" },
+  { key:"ui_transition", url:"src/assets/img/screens/transition.png", type:"image" },
+  { key:"ui_beacon",     url:"src/assets/img/screens/screen_beacon.png", type:"image" },
+
+  { key:"ui_icons",   url:"src/assets/img/kit/ui_icons_basics.png", type:"image" },
+  { key:"ui_input",   url:"src/assets/img/kit/ui_input.png", type:"image" },
+  { key:"ui_windows", url:"src/assets/img/kit/ui_windows.png", type:"image" },
+  { key:"ui_dice",    url:"src/assets/img/kit/ui_dice.png", type:"image" },
+  { key:"ui_hud",     url:"src/assets/img/kit/ui_hud.png", type:"image" },
 ],
+
     audio: [
       // Keeps the audio system “warm” even if you haven’t added real sfx yet
       { key: "silence", url: "data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=", type: "audio" },
