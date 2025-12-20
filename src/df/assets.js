@@ -4,10 +4,10 @@
 
   const manifest = {
     images: [
-      { key: "glyph",       url: "assets/img/glyph.svg",        type: "image" },
-      { key: "main_pc",     url: "assets/img/main_pc.png",      type: "image" },
-      { key: "starter_kit", url: "assets/img/starter_kit.png",  type: "image" },
-      { key: "town_tiles",  url: "assets/img/town_tiles.png",   type: "image" },
+{ key: "glyph", url: "src/assets/img/glyph.svg", type: "image" },
+      { key: "main_pc",     url: "src/assets/img/main_pc.png",      type: "image" },
+      { key: "starter_kit", url: "src/assets/img/starter_kit.png",  type: "image" },
+      { key: "town_tiles",  url: "src/assets/img/town_tiles.png",   type: "image" },
     ],
     audio: [
       // Keeps the audio system “warm” even if you haven’t added real sfx yet
