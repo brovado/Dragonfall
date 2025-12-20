@@ -1,5 +1,6 @@
 (() => {
   const {React}=DF; const {useEffect,useMemo,useRef,useState}=React; const h=React.createElement;
+  class ErrorBoundary extends React.Component{constructor(p){super(p); this.state={error:null}; this.handleReload=this.handleReload.bind(this);} static getDerivedStateFromError(error){return {error};} componentDidCatch(error,info){console.error("UI crash",error,info);} handleReload(){if(typeof window!="undefined") window.location.reload();} render(){if(this.state.error){const msg=this.state.error?.message||String(this.state.error); return h("div",{className:"df-error-boundary"},h("div",{className:"df-error-panel"},h("div",{className:"df-error-title"},"Something went wrong."),h("div",{className:"df-error-message"},msg),h("button",{className:"df-button df-button--danger",onClick:this.handleReload},"Reload")));} return this.props.children;}}
   DF.App=()=>{
     const screenForPhase=(phase)=>{
       if(phase==="dead") return "DeadScreen";
@@ -20,6 +21,16 @@
     const toastTimer=useRef(null);
     useEffect(()=>{DF.state=state;},[state]);
 
+    const reachableNodes=(web,currentId)=>{
+      if(!web||!currentId) return [];
+      const out=new Set();
+      for(const e of web.edges||[]){
+        if(e.a===currentId) out.add(e.b);
+        if(e.b===currentId) out.add(e.a);
+      }
+      return Array.from(out);
+    };
+
     const weaponObj=useMemo(()=>DF.WEAPONS.find(w=>w.key===state.player.weapon)||null,[state.player.weapon]);
     const styleObj=useMemo(()=>DF.WEAPONS.flatMap(w=>w.styles).find(s=>s.key===state.player.style)||null,[state.player.style]);
     const elementObj=useMemo(()=>DF.ELEMENTS.find(e=>e.key===state.player.element)||null,[state.player.element]);
@@ -35,15 +46,6 @@
       const hpBase=10+(d.meta.legacy.startHP||0);
       d.player.hpMax=hpBase; d.player.hp=DF.clamp(d.player.hp,0,hpBase);
       d.player.title=DF.titleFromBuild(d.player.weapon,d.player.style,d.player.element,d.player.crossStyle);
-    };
-    const reachableNodes=(web,currentId)=>{
-      if(!web||!currentId) return [];
-      const out=new Set();
-      for(const e of web.edges||[]){
-        if(e.a===currentId) out.add(e.b);
-        if(e.b===currentId) out.add(e.a);
-      }
-      return Array.from(out);
     };
     const setStatus=(draft,status)=>{ if(!draft.run) return; draft.run.status=status; };
 
@@ -262,7 +264,8 @@
 
     const viewportShell=h(DF.PlayWindow,{title:playHeaderTitle,subtitle:playHeaderSubtitle,viewport:viewportContent,overlay:overlayContent,controls:stageControls,actions:actionButtons,wipeKey:`${state.phase}-${state.run.inCombat?"combat":"field"}`});
 
-    return h("div",{className:"df-app df-ui"},
+    return h(ErrorBoundary,null,
+      h("div",{className:"df-app df-ui"},
       h(DF.GameShell,{
         title:"Dragonfall",
         subtitle:subtitle,
@@ -276,6 +279,6 @@
       }),
       h(DF.PromotionModal,{state,onLater:()=>setState(p=>({...p,ui:{...p.ui,showPromotion:false}})),onChooseElement:choosePromotionElement,onChooseCross:choosePromotionCross}),
       h(DF.Toast,{toast})
-    );
+    ));
   };
 })();
