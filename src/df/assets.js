@@ -14,7 +14,7 @@
       { key: "silence", url: "data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=", type: "audio" },
     ],
     data: [
-      { key: "flavor", url: "assets/data/flavor.json", type: "json" },
+      { key: "flavor", url: "src/assets/data/flavor.json", type: "json" },
     ],
   };
 
