@@ -5,9 +5,11 @@
   const h = React.createElement;
   const { useEffect, useState } = React;
 
-  DF.ScreenWipe = ({ activeKey, duration = 180 }) => {
+  DF.ScreenWipe = ({ activeKey, duration = 200 }) => {
     const [phase, setPhase] = useState("idle");
     const [visible, setVisible] = useState(false);
+    const transitionImg = DF?.assets?.images?.ui_transition;
+    const src = transitionImg?.src;
 
     useEffect(() => {
       setVisible(true);
@@ -24,9 +26,13 @@
     }, [activeKey, duration]);
 
     if (!visible && phase === "idle") return null;
-    return h("div", {
-      className: `df-screenwipe df-screenwipe--${phase}`,
-      "aria-hidden": "true",
-    });
+    return h(
+      "div",
+      {
+        className: `df-screenwipe df-screenwipe--${phase}`,
+        "aria-hidden": "true",
+      },
+      src ? h("img", { className: "df-screenwipe__img", src, alt: "" }) : null
+    );
   };
 })();
