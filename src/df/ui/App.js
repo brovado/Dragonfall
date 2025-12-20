@@ -1,7 +1,17 @@
 (() => {
   const {React}=DF; const {useEffect,useMemo,useRef,useState}=React; const h=React.createElement;
   DF.App=()=>{
-    const [state,setState]=useState(()=>DF.mkNewGame());
+    const screenForPhase=(phase)=>{
+      if(phase==="dead") return "DeadScreen";
+      if(phase==="play") return "PlayScreen";
+      return "PrepScreen";
+    };
+    const withScreen=(draft)=>{
+      if(!draft.screen) draft.screen=screenForPhase(draft.phase);
+      return draft;
+    };
+
+    const [state,setState]=useState(()=>withScreen(DF.mkNewGame()));
     const [toast,setToast]=useState(null);
     const toastTimer=useRef(null);
     useEffect(()=>{DF.state=state;},[state]);
@@ -23,16 +33,16 @@
     };
 
     const saveGame=()=>{try{DF.saveGame(state);showToast("Saved.");}catch{showToast("Save failed.");}};
-    const loadGame=()=>{try{const parsed=DF.loadGame(); if(!parsed) return showToast("No save found."); setState(parsed); showToast("Loaded.");}catch{showToast("Load failed.");}};
+    const loadGame=()=>{try{const parsed=DF.loadGame(); if(!parsed) return showToast("No save found."); const next=withScreen(structuredClone(parsed)); setState(next); showToast("Loaded.");}catch{showToast("Load failed.");}};
     const clearSave=()=>{try{DF.clearSave();showToast("Save cleared.");}catch{showToast("Could not clear.");}};
-    const hardReset=()=>{const next=DF.mkNewGame(Date.now()); next.meta=state.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; DF.pushLog(next,{type:"system",text:"New run started."}); setState(next); showToast("New run.");};
+    const hardReset=()=>{const next=withScreen(DF.mkNewGame(Date.now())); next.meta=state.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; DF.pushLog(next,{type:"system",text:"New run started."}); setState(next); showToast("New run.");};
 
     useEffect(()=>{setState(prev=>{const d=structuredClone(prev); DF.pushLog(d,{type:"story",text:"Dragons rule the skies. Cities survive as beacons. The Mountain Expanse pays in blood and salvage."}); DF.pushLog(d,{type:"story",text:"Promotions require XP. Only extracted goods endure."}); return d;});},[]);
 
-    const chooseWeapon=(weaponKey)=>setState(prev=>{const d=structuredClone(prev); d.player.weapon=weaponKey; recalcPlayer(d); d.phase="chooseStyle"; DF.pushLog(d,{type:"system",text:`Armament chosen: ${weaponKey.toUpperCase()}.`}); return d;});
-    const chooseStyle=(styleKey)=>setState(prev=>{const d=structuredClone(prev); d.player.style=styleKey; recalcPlayer(d); d.phase="play"; d.run.depth=1; const rng=DF.mulberry32(d.rngSeed^0xabc); d.run.nodeWeb=DF.createNodeWeb(rng); d.run.currentNodeId="n0"; const start=d.run.nodeWeb.nodes.find(n=>n.id==="n0"); d.run.site=start?.site||DF.pickSite(rng); d.run.danger="unknown"; d.ui.showClassTree=false; DF.pushLog(d,{type:"system",text:`Style chosen: ${styleKey.toUpperCase()}.`}); DF.pushLog(d,{type:"story",text:"You are torn into light. Then—cold stone, thin air, and the smell of ash."}); return d;});
+    const chooseWeapon=(weaponKey)=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.player.weapon=weaponKey; recalcPlayer(d); d.phase="chooseStyle"; d.screen=screenForPhase(d.phase); DF.pushLog(d,{type:"system",text:`Armament chosen: ${weaponKey.toUpperCase()}.`}); return d;});
+    const chooseStyle=(styleKey)=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.player.style=styleKey; recalcPlayer(d); d.phase="play"; d.screen=screenForPhase(d.phase); d.run.depth=1; const rng=DF.mulberry32(d.rngSeed^0xabc); d.run.nodeWeb=DF.createNodeWeb(rng); d.run.currentNodeId="n0"; const start=d.run.nodeWeb.nodes.find(n=>n.id==="n0"); d.run.site=start?.site||DF.pickSite(rng); d.run.danger="unknown"; d.ui.showClassTree=false; DF.pushLog(d,{type:"system",text:`Style chosen: ${styleKey.toUpperCase()}.`}); DF.pushLog(d,{type:"story",text:"You are torn into light. Then—cold stone, thin air, and the smell of ash."}); return d;});
 
-    const takeDamage=(d,amount,reason)=>{d.player.hp=DF.clamp(d.player.hp-amount,0,d.player.hpMax); DF.pushLog(d,{type:"system",text:`You take ${amount} damage (${reason}).`}); if(d.player.hp<=0){d.phase="dead"; const echoes=2+d.run.depth+Math.floor(d.player.gold/3); d.meta.echoes+=echoes; DF.pushLog(d,{type:"story",text:"☠️ You fall. The mountain keeps what you failed to extract."}); DF.pushLog(d,{type:"system",text:`You gain ${echoes} Echoes at the Beacon.`});}};
+    const takeDamage=(d,amount,reason)=>{d.player.hp=DF.clamp(d.player.hp-amount,0,d.player.hpMax); DF.pushLog(d,{type:"system",text:`You take ${amount} damage (${reason}).`}); if(d.player.hp<=0){d.phase="dead"; d.screen=screenForPhase(d.phase); const echoes=2+d.run.depth+Math.floor(d.player.gold/3); d.meta.echoes+=echoes; DF.pushLog(d,{type:"story",text:"☠️ You fall. The mountain keeps what you failed to extract."}); DF.pushLog(d,{type:"system",text:`You gain ${echoes} Echoes at the Beacon.`});}};
     const ensureEncounter=()=>setState(prev=>{const d=structuredClone(prev); if(d.run.inCombat) return prev; const rng=DF.mulberry32(d.rngSeed^d.run.depth^0xdead); const enemy=DF.pickEnemy(rng); d.run.inCombat=true; d.run.enemy={...enemy}; d.run.enemyHP=enemy.hp; DF.pushLog(d,{type:"story",text:`⚔️ ${enemy.name} appears. ${enemy.desc}`}); return d;});
     const enemyTurn=(d,ctx)=>DF.resolveEnemyTurn(d,takeDamage,ctx);
 
@@ -67,7 +77,7 @@
       return d;
     });
 
-    const reviveToStart=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="dead") return d; const next=DF.mkNewGame(Date.now()); next.meta=d.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; DF.pushLog(next,{type:"system",text:"You wake at the Beacon. The mountain waits."}); return next;});
+    const reviveToStart=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="dead") return d; const next=withScreen(DF.mkNewGame(Date.now())); next.meta=d.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; DF.pushLog(next,{type:"system",text:"You wake at the Beacon. The mountain waits."}); return next;});
     const metaSpend=(key,cost,apply)=>setState(prev=>{const d=structuredClone(prev); if(d.meta.echoes<cost){DF.pushLog(d,{type:"system",text:"Not enough Echoes."}); return d;} d.meta.echoes-=cost; apply(d); DF.pushLog(d,{type:"system",text:`Beacon upgraded: ${key}.`}); return d;});
 
     const currentNode=state.run.nodeWeb?.nodes.find(n=>n.id===state.run.currentNodeId);
@@ -134,7 +144,18 @@
       h("div",{className:"df-panel__note"},"Loadout overlay lives inside the play window for class changes and confirmations.")
     );
 
-    const overlayContent=(state.phase==="start"||state.phase==="chooseStyle")?h(DF.PrepScreen,{state,weaponObj,onChooseWeapon:chooseWeapon,onChooseStyle:chooseStyle,onToggleClassTree:toggleLoadoutOverlay}):state.phase==="dead"?h(DF.DeadScreen,{state,onMetaSpend:metaSpend,onWake:reviveToStart}):(state.ui.showClassTree?loadoutOverlay:null);
+    const screenKey=state.screen||screenForPhase(state.phase);
+    const defaultScreens={PrepScreen:DF.PrepScreen,PlayScreen:DF.PlayScreen,DeadScreen:DF.DeadScreen};
+    const screens={...defaultScreens,...(DF.ui?.screens||{})};
+    const ScreenComponent=screens[screenKey];
+    const screenProps=({
+      PrepScreen:{state,weaponObj,onChooseWeapon:chooseWeapon,onChooseStyle:chooseStyle,onToggleClassTree:toggleLoadoutOverlay},
+      PlayScreen:{state},
+      DeadScreen:{state,onMetaSpend:metaSpend,onWake:reviveToStart}
+    })[screenKey]||{state};
+    const isDefaultScreen=ScreenComponent===defaultScreens[screenKey];
+    const shouldRenderScreen=!!ScreenComponent && (screenKey!=="PlayScreen" || !isDefaultScreen);
+    const overlayContent=shouldRenderScreen?h(ScreenComponent,{key:screenKey,...screenProps}):(state.ui.showClassTree?loadoutOverlay:null);
 
     const actionButtons=(()=>{
       if(state.phase==="dead") return [
