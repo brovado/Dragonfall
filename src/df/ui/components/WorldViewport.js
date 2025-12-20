@@ -42,6 +42,8 @@
 
   function WorldViewport({ scale = DEFAULT_SCALE }) {
     const canvasRef = React.useRef(null);
+    const frameRef = React.useRef(null);
+    const [currentScale, setCurrentScale] = React.useState(scale || DEFAULT_SCALE);
 
     React.useEffect(() => {
       const canvas = canvasRef.current;
@@ -97,9 +99,26 @@
       };
     }, []);
 
+    React.useLayoutEffect(() => {
+      const node = frameRef.current;
+      if (!node) return;
+      const resize = () => {
+        const rect = node.getBoundingClientRect();
+        const maxScale = Math.max(
+          1,
+          Math.floor(Math.min(rect.width / VIEW_WIDTH, rect.height / VIEW_HEIGHT) || DEFAULT_SCALE)
+        );
+        setCurrentScale(Math.max(1, maxScale));
+      };
+      resize();
+      const obs = new ResizeObserver(resize);
+      obs.observe(node);
+      return () => obs.disconnect();
+    }, []);
+
     const canvasStyle = {
-      width: `${VIEW_WIDTH * scale}px`,
-      height: `${VIEW_HEIGHT * scale}px`,
+      width: `${VIEW_WIDTH * currentScale}px`,
+      height: `${VIEW_HEIGHT * currentScale}px`,
     };
 
     return h(
@@ -107,7 +126,7 @@
       { className: "df-world-viewport" },
       h(
         "div",
-        { className: "df-world-viewport__frame" },
+        { className: "df-world-viewport__frame", ref: frameRef },
         h("canvas", {
           ref: canvasRef,
           width: VIEW_WIDTH,
