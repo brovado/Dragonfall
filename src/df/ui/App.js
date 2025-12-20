@@ -30,7 +30,7 @@
     useEffect(()=>{setState(prev=>{const d=structuredClone(prev); DF.pushLog(d,{type:"story",text:"Dragons rule the skies. Cities survive as beacons. The Mountain Expanse pays in blood and salvage."}); DF.pushLog(d,{type:"story",text:"Promotions require XP. Only extracted goods endure."}); return d;});},[]);
 
     const chooseWeapon=(weaponKey)=>setState(prev=>{const d=structuredClone(prev); d.player.weapon=weaponKey; recalcPlayer(d); d.phase="chooseStyle"; DF.pushLog(d,{type:"system",text:`Armament chosen: ${weaponKey.toUpperCase()}.`}); return d;});
-    const chooseStyle=(styleKey)=>setState(prev=>{const d=structuredClone(prev); d.player.style=styleKey; recalcPlayer(d); d.phase="play"; d.run.depth=1; const rng=DF.mulberry32(d.rngSeed^0xabc); d.run.nodeWeb=DF.createNodeWeb(rng); d.run.currentNodeId="n0"; const start=d.run.nodeWeb.nodes.find(n=>n.id==="n0"); d.run.site=start?.site||DF.pickSite(rng); d.run.danger="unknown"; DF.pushLog(d,{type:"system",text:`Style chosen: ${styleKey.toUpperCase()}.`}); DF.pushLog(d,{type:"story",text:"You are torn into light. Then—cold stone, thin air, and the smell of ash."}); return d;});
+    const chooseStyle=(styleKey)=>setState(prev=>{const d=structuredClone(prev); d.player.style=styleKey; recalcPlayer(d); d.phase="play"; d.run.depth=1; const rng=DF.mulberry32(d.rngSeed^0xabc); d.run.nodeWeb=DF.createNodeWeb(rng); d.run.currentNodeId="n0"; const start=d.run.nodeWeb.nodes.find(n=>n.id==="n0"); d.run.site=start?.site||DF.pickSite(rng); d.run.danger="unknown"; d.ui.showClassTree=false; DF.pushLog(d,{type:"system",text:`Style chosen: ${styleKey.toUpperCase()}.`}); DF.pushLog(d,{type:"story",text:"You are torn into light. Then—cold stone, thin air, and the smell of ash."}); return d;});
 
     const takeDamage=(d,amount,reason)=>{d.player.hp=DF.clamp(d.player.hp-amount,0,d.player.hpMax); DF.pushLog(d,{type:"system",text:`You take ${amount} damage (${reason}).`}); if(d.player.hp<=0){d.phase="dead"; const echoes=2+d.run.depth+Math.floor(d.player.gold/3); d.meta.echoes+=echoes; DF.pushLog(d,{type:"story",text:"☠️ You fall. The mountain keeps what you failed to extract."}); DF.pushLog(d,{type:"system",text:`You gain ${echoes} Echoes at the Beacon.`});}};
     const ensureEncounter=()=>setState(prev=>{const d=structuredClone(prev); if(d.run.inCombat) return prev; const rng=DF.mulberry32(d.rngSeed^d.run.depth^0xdead); const enemy=DF.pickEnemy(rng); d.run.inCombat=true; d.run.enemy={...enemy}; d.run.enemyHP=enemy.hp; DF.pushLog(d,{type:"story",text:`⚔️ ${enemy.name} appears. ${enemy.desc}`}); return d;});
@@ -78,6 +78,8 @@
     const subtitle=state.phase==="dead"?"☠️ Fallen":state.phase==="play"?"In the Mountain":"Preparation";
     const {Card,Pill,Button}=DF;
 
+    const toggleLoadoutOverlay=()=>setState(prev=>({...prev,ui:{...prev.ui,showClassTree:!prev.ui.showClassTree}}));
+
     const hudPills=[h(Pill,{key:"hp"},`HP ${state.player.hp}/${state.player.hpMax}`),h(Pill,{key:"xp"},`XP ${state.player.xp}`),h(Pill,{key:"echoes"},`Echoes ${state.meta.echoes}`),h(Pill,{key:"gold"},`Gold ${state.player.gold}`)];
     const topActions=[h(Button,{key:"save",onClick:saveGame,variant:"ghost"},"Save"),h(Button,{key:"load",onClick:loadGame,variant:"ghost"},"Load"),h(Button,{key:"clear",onClick:clearSave,variant:"ghost"},"Clear"),h(Button,{key:"new",onClick:hardReset,variant:"danger"},"New Run")];
 
@@ -88,65 +90,102 @@
       h("div",{className:"df-chat-shell__input"},h("input",{type:"text",disabled:true,placeholder:"Chat coming soon",className:"df-chat-shell__input-box"}))
     );
 
-    const viewportSplash=(title,body)=>h("div",{className:"df-viewport-card"},
-      h("div",{className:"df-viewport-card__inner"},
-        h("div",{className:"df-viewport-card__heading"},title),
-        h("div",{className:"df-viewport-card__body"},body)
-      )
-    );
-
-    const viewportPlay=h("div",{className:"df-viewport-card"},
+    const latestStory=(state.run.log?.find(l=>l.type==="story")||state.run.log?.[state.run.log.length-1]||{})?.text||"The mountain waits.";
+    const worldCard=h("div",{className:"df-viewport-card df-playwindow__world"},
       h("div",{className:"df-viewport-card__frame"},
-        h("div",{className:"df-viewport-card__title"},"Field View"),
+        h("div",{className:"df-viewport-card__title"}, state.phase==="dead"?"Beacon View":"Field View"),
         h("div",{className:"df-viewport-card__canvas"},h(DF.WorldViewport,{scale:4})),
         h("div",{className:"df-viewport-card__hint"},
-          h("div",{className:"df-viewport-card__hint-main"},(state.run.log?.find(l=>l.type==="story")||state.run.log?.[state.run.log.length-1]||{}).text||"The mountain waits."),
+          h("div",{className:"df-viewport-card__hint-main"},latestStory),
           h("div",{className:"df-viewport-card__hint-sub"},"Pixel viewport scales to fit")
         )
       )
     );
 
-    const playActions=h(Card,{title:"Actions",subtitle:"Quick commands"},
-      h("div",{className:"df-action-grid"},
-        h(Button,{variant:"ghost",onClick:()=>setState(prev=>({...prev,ui:{...prev.ui,showClassTree:!prev.ui.showClassTree}}))},"Class Lattice"),
-        h(Button,{variant:"ghost",onClick:rest},"Rest"),
-        h(Button,{variant:"ghost",onClick:buildStation},"Build Station"),
-        h(Button,{variant:"ghost",onClick:extract},"Extract")
+    const infoCard=h("div",{className:"df-playwindow__intel"},
+      h("div",{className:"df-panel__section-title"},"Site Intel"),
+      h("div",{className:"df-info-grid"},
+        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Phase"),h("div",{className:"df-info-value"},state.phase.toUpperCase())),
+        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Danger"),h("div",{className:"df-info-value"},state.run.danger||"calm")),
+        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Depth"),h("div",{className:"df-info-value"},state.run.depth||0)),
+        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Region"),h("div",{className:"df-info-value"},state.run.region||"Unknown"))
       ),
-      h("div",{className:"df-panel__note"},"Movement + combat hooks stay intact; UI is now shell-based.")
+      h("div",{className:"df-panel__section-title"},"Vitals"),
+      h("div",{className:"df-chip-row"},
+        h(Pill,null,`HP ${state.player.hp}/${state.player.hpMax}`),
+        h(Pill,null,`XP ${state.player.xp}`),
+        h(Pill,null,`Gold ${state.player.gold}`)
+      ),
+      h("div",{className:"df-panel__note"},"Primary interactions now live inside the play window. Use toggles to open overlays.")
     );
 
-    const slotGrid=Array.from({length:20});
-    const inventoryPanel=h(Card,{title:"Inventory",subtitle:"Equipment preview"},
-      h("div",{className:"df-slot-grid"},
-        slotGrid.map((_,idx)=>h("div",{key:idx,className:"df-slot"},(state.player.inventory||[])[idx]?h("span",{className:"df-slot__item"},(state.player.inventory||[])[idx]):null))
+    const viewportContent=h(React.Fragment,null,worldCard,infoCard);
+
+    const loadoutOverlay=h("div",{className:"df-loadout-overlay"},
+      h("div",{className:"df-panel__section-title"},"Class & Loadout"),
+      h("div",{className:"df-info-grid"},
+        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Weapon"),h("div",{className:"df-info-value"},weaponObj?.name||"Unbound")),
+        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Style"),h("div",{className:"df-info-value"},styleObj?.name||"Untrained")),
+        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Element"),h("div",{className:"df-info-value"},elementObj?.name||"None")),
+        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Title"),h("div",{className:"df-info-value"},state.player.title||"Unbound"))
       ),
-      h("div",{className:"df-panel__note"},"Extracted goods persist across runs. Slots are a preview.")
+      h("div",{className:"df-panel__section-title"},"Skills"),
+      h("div",{className:"df-skill-list"},skills.map(s=>h("div",{key:s.key,className:"df-skill-card"},h("div",{className:"df-skill-card__top"},h("div",{className:"df-skill-card__title"},s.name),h("span",{className:"df-skill-card__kind"},s.kind)),h("div",{className:"df-skill-card__desc"},s.desc)))),
+      h("div",{className:"df-panel__note"},"Loadout overlay lives inside the play window for class changes and confirmations.")
     );
 
-    const prepSidebar=[
-      h(Card,{key:"prep",title:"Loadout",subtitle:"Choose how you start"},h(DF.PrepScreen,{state,weaponObj,onChooseWeapon:chooseWeapon,onChooseStyle:chooseStyle,onToggleClassTree:()=>setState(p=>({...p,ui:{...p.ui,showClassTree:!p.ui.showClassTree}}))})),
-      inventoryPanel,
-      h(DF.HelpPanel,{key:"help"})
+    const overlayContent=(state.phase==="start"||state.phase==="chooseStyle")?h(DF.PrepScreen,{state,weaponObj,onChooseWeapon:chooseWeapon,onChooseStyle:chooseStyle,onToggleClassTree:toggleLoadoutOverlay}):state.phase==="dead"?h(DF.DeadScreen,{state,onMetaSpend:metaSpend,onWake:reviveToStart}):(state.ui.showClassTree?loadoutOverlay:null);
+
+    const actionButtons=(()=>{
+      if(state.phase==="dead") return [
+        {key:"wake",label:"Wake at Beacon",hint:"1",onClick:reviveToStart}
+      ];
+      if(state.phase!=="play") return [
+        {key:"loadout",label:"Loadout Overlay",hint:"1",onClick:toggleLoadoutOverlay}
+      ];
+      if(state.run.inCombat) return [
+        {key:"attack",label:"Attack",hint:"1",onClick:()=>combatAction("attack")},
+        {key:"defend",label:"Brace",hint:"2",onClick:()=>combatAction("defend")},
+        {key:"maneuver",label:"Maneuver",hint:"3",onClick:()=>combatAction("maneuver")},
+        {key:"aim",label:"Aim",hint:"4",onClick:()=>combatAction("aim")},
+        {key:"dash",label:"Dash",hint:"5",onClick:()=>combatAction("dash")}
+      ];
+      return [
+        {key:"rest",label:"Rest",hint:"1",onClick:rest},
+        {key:"build",label:"Build Station",hint:"2",onClick:buildStation},
+        {key:"extract",label:"Extract",hint:"3",onClick:extract},
+        {key:"loadout",label:state.ui.showClassTree?"Hide Loadout":"Loadout",hint:"4",onClick:toggleLoadoutOverlay}
+      ];
+    })();
+
+    const playHeaderTitle=state.phase==="dead"?"Beacon":state.run.site?.name||"Arcane Run";
+    const playHeaderSubtitle=state.phase==="play"?(state.run.inCombat?"In Combat":"Exploration")+` • Depth ${state.run.depth||1}`:subtitle;
+    const stageControls=[h(Button,{variant:"ghost",key:"loadout",onClick:toggleLoadoutOverlay},state.ui.showClassTree?"Hide Loadout":"Show Loadout")];
+
+    const sidebarContent=[
+      h(Card,{key:"toggles",title:"Sidebar Toggles",subtitle:"Panels + overlays"},
+        h("div",{className:"df-toggle-list"},
+          h(Button,{variant:"ghost",onClick:toggleLoadoutOverlay},"Toggle Loadout"),
+          h(Button,{variant:"ghost",onClick:()=>setState(p=>({...p,ui:{...p.ui,showPromotion:!p.ui.showPromotion}})),disabled:state.phase!=="play"||state.player.xp<state.player.nextPromoAt||state.player.promoTier>0},"Promo Check"),
+          h(Button,{variant:"ghost",onClick:saveGame},"Quick Save")
+        )
+      ),
+      h(Card,{key:"vitals",title:"Vitals",subtitle:"Quick readout"},
+        h("div",{className:"df-info-grid"},
+          h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"HP"),h("div",{className:"df-info-value"},`${state.player.hp}/${state.player.hpMax}`)),
+          h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"XP"),h("div",{className:"df-info-value"},state.player.xp)),
+          h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Echoes"),h("div",{className:"df-info-value"},state.meta.echoes))
+        )
+      ),
+      h("details",{key:"help",className:"df-side-collapse"},
+        h("summary",null,"Help & Tips"),
+        h("div",{className:"df-side-collapse__body"},h(DF.HelpPanel,null))
+      )
     ];
 
-    const playSidebar=[
-      playActions,
-      h(DF.CharacterPanel,{state,skills,key:"stats"}),
-      inventoryPanel,
-      h(DF.HelpPanel,{key:"help"})
-    ];
+    const viewportShell=h(DF.PlayWindow,{title:playHeaderTitle,subtitle:playHeaderSubtitle,viewport:viewportContent,overlay:overlayContent,controls:stageControls,actions:actionButtons,wipeKey:`${state.phase}-${state.run.inCombat?"combat":"field"}`});
 
-    const deadSidebar=[
-      h(Card,{key:"return",title:"Beacon",subtitle:"Spend echoes"},h(DF.DeadScreen,{state,onMetaSpend:metaSpend,onWake:reviveToStart})),
-      inventoryPanel,
-      h(DF.HelpPanel,{key:"help"})
-    ];
-
-    const viewportContent=state.phase==="play"?viewportPlay:state.phase==="dead"?viewportSplash("Beacon Silence","You fell in the mountain. Return stronger."):viewportSplash("Arcane Run","Dragons own the sky. Promotions require XP. Only extracted goods endure.");
-    const sidebarContent=state.phase==="play"?playSidebar:state.phase==="dead"?deadSidebar:prepSidebar;
-
-    return h("div",{className:"df-app"},
+    return h("div",{className:"df-app df-ui"},
       h(DF.GameShell,{
         title:"Dragonfall",
         subtitle:subtitle,
@@ -154,7 +193,7 @@
         hudPills,
         topActions,
         keyboardHints:["[Esc] Menu","[H] Help"],
-        viewport:viewportContent,
+        viewport:viewportShell,
         sidebar:sidebarContent,
         bottom:chatPanel
       }),
