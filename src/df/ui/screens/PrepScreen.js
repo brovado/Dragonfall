@@ -1,28 +1,23 @@
 (() => {
-  const {React}=DF; const h=React.createElement; const {Button}=DF;
-  DF.PrepScreen=({state,weaponObj,onChooseWeapon,onChooseStyle,onToggleClassTree})=>{
+  const {React}=DF; const h=React.createElement;
+  DF.PrepScreen=({state})=>{
     const phase=state.phase;
+    const weaponKey=state.player.weapon;
+    const styleKey=state.player.style;
+    const weapon=DF.WEAPONS.find(w=>w.key===weaponKey);
+    const style=weapon?.styles.find(s=>s.key===styleKey);
     return h("div",{className:"df-prep"},
       h("div",{className:"df-prep__intro"},"Dragons own the sky. Promotions require XP. Only extracted goods endure."),
-      h("div",{className:"df-chip-row"},h(Button,{variant:"ghost",onClick:onToggleClassTree},state.ui.showClassTree?"Hide Class Lattice":"Show Class Lattice")),
-      phase==="start" ? h("div",{className:"df-prep__block"},
-        h("div",{className:"df-panel__section-title"},"Choose your starting weapon."),
-        h("div",{className:"df-option-grid"},
-          DF.WEAPONS.map(w=>h("button",{key:w.key,onClick:()=>onChooseWeapon(w.key),className:"df-option-card"},
-            h("div",{className:"df-option-card__title"},w.name),
-            h("div",{className:"df-option-card__desc"},w.tagline)
-          ))
-        )
-      ): null,
-      phase==="chooseStyle" ? h("div",{className:"df-prep__block"},
-        h("div",{className:"df-panel__section-title"},"Choose your weapon style."),
-        h("div",{className:"df-option-grid"},
-          (weaponObj?.styles||[]).map(s=>h("button",{key:s.key,onClick:()=>onChooseStyle(s.key),className:"df-option-card"},
-            h("div",{className:"df-option-card__title"},s.name),
-            h("div",{className:"df-option-card__desc"},s.desc)
-          ))
-        )
-      ): null
+      h("div",{className:"df-prep__block"},
+        h("div",{className:"df-panel__section-title"},"Loadout setup runs through the log."),
+        h("div",{className:"df-panel__note"},"Use the event log under the play window to pick your starting weapon and style."),
+        h("div",{className:"df-info-grid"},
+          h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Weapon"),h("div",{className:"df-info-value"},weapon?.name||"Pending")),
+          h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Style"),h("div",{className:"df-info-value"},style?.name||"Pending"))
+        ),
+        phase==="start"?h("div",{className:"df-panel__note"},"Waiting for you to select a weapon in the log."):null,
+        phase==="chooseStyle"?h("div",{className:"df-panel__note"},"Choose a style from the log prompt to begin your run."):null
+      )
     );
   };
 })();

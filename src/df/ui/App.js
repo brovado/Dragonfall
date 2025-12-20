@@ -15,6 +15,8 @@
       if(typeof draft.ui.travelOpen!=="boolean") draft.ui.travelOpen=false;
       if(typeof draft.ui.menuOpen!=="boolean") draft.ui.menuOpen=false;
       if(typeof draft.ui.sidebarCollapsed!=="boolean") draft.ui.sidebarCollapsed=false;
+      if(typeof draft.ui.promptedWeapon!=="boolean") draft.ui.promptedWeapon=false;
+      if(typeof draft.ui.promptedStyle!=="boolean") draft.ui.promptedStyle=false;
       return draft;
     };
 
@@ -33,10 +35,6 @@
       return Array.from(out);
     };
 
-    const weaponObj=useMemo(()=>DF.WEAPONS.find(w=>w.key===state.player.weapon)||null,[state.player.weapon]);
-    const styleObj=useMemo(()=>DF.WEAPONS.flatMap(w=>w.styles).find(s=>s.key===state.player.style)||null,[state.player.style]);
-    const elementObj=useMemo(()=>DF.ELEMENTS.find(e=>e.key===state.player.element)||null,[state.player.element]);
-    const skills=useMemo(()=>DF.skillListForBuild(state.player.weapon,state.player.style,state.player.element,state.player.crossStyle),[state.player.weapon,state.player.style,state.player.element,state.player.crossStyle]);
     const travelOptions=useMemo(()=>reachableNodes(state.run.nodeWeb,state.run.currentNodeId),[state.run.nodeWeb,state.run.currentNodeId]);
 
     const showToast=(msg)=>{setToast(msg); if(toastTimer.current) clearTimeout(toastTimer.current); toastTimer.current=setTimeout(()=>setToast(null),2200);};
@@ -49,20 +47,64 @@
       d.player.hpMax=hpBase; d.player.hp=DF.clamp(d.player.hp,0,hpBase);
       d.player.title=DF.titleFromBuild(d.player.weapon,d.player.style,d.player.element,d.player.crossStyle);
     };
+    const resolvePromptEntry=(draft,promptId,choiceId)=>{
+      const entry=draft.run?.log?.find?.(l=>l.id===promptId);
+      if(entry){entry.resolved=true; entry.resolvedChoice=choiceId;}
+    };
+    const pushPrompt=(draft,promptKey,text,choices=[])=>{
+      const hasActive=draft.run?.log?.some?.(l=>l.type==="prompt"&&l.promptKey===promptKey&&!l.resolved);
+      if(hasActive) return;
+      DF.pushLog(draft,{type:"prompt",promptKey,text,choices:choices.map(c=>({...c,id:c.id||c.value||c.label})),resolved:false});
+    };
+    const primePrepPrompts=(draft)=>{
+      if(draft.phase==="start"&&!draft.ui.promptedWeapon){
+        pushPrompt(draft,"start-weapon","Choose your starting weapon.",DF.WEAPONS.map(w=>({id:w.key,label:w.name,sub:w.tagline,value:w.key})));
+        draft.ui.promptedWeapon=true;
+      }
+      if(draft.phase==="chooseStyle"&&!draft.ui.promptedStyle&&draft.player.weapon){
+        const weapon=DF.WEAPONS.find(w=>w.key===draft.player.weapon);
+        if(weapon){
+          pushPrompt(draft,"start-style",`Choose a ${weapon.name} style.`,weapon.styles.map(s=>({id:s.key,label:s.name,sub:s.desc,value:s.key})));
+          draft.ui.promptedStyle=true;
+        }
+      }
+    };
+    const applyWeaponChoice=(draft,weaponKey,promptId)=>{
+      if(!weaponKey) return;
+      draft.player.weapon=weaponKey; recalcPlayer(draft);
+      draft.phase="chooseStyle"; draft.screen=screenForPhase(draft.phase);
+      draft.ui.menuOpen=false; draft.ui.promptedStyle=false;
+      resolvePromptEntry(draft,promptId,weaponKey);
+      DF.pushLog(draft,{type:"system",text:`Armament chosen: ${weaponKey.toUpperCase()}.`});
+      primePrepPrompts(draft);
+    };
+    const applyStyleChoice=(draft,styleKey,promptId)=>{
+      if(!styleKey) return;
+      draft.player.style=styleKey; recalcPlayer(draft);
+      draft.phase="play"; draft.screen=screenForPhase(draft.phase);
+      draft.run.depth=1; const rng=DF.mulberry32(draft.rngSeed^0xabc);
+      draft.run.nodeWeb=DF.createNodeWeb(rng); draft.run.currentNodeId="n0";
+      const start=draft.run.nodeWeb.nodes.find(n=>n.id==="n0");
+      draft.run.site=start?.site||DF.pickSite(rng); draft.run.danger="unknown";
+      setStatus(draft,"exploring"); draft.ui.menuOpen=false; draft.ui.promptedStyle=true;
+      resolvePromptEntry(draft,promptId,styleKey);
+      DF.pushLog(draft,{type:"system",text:`Style chosen: ${styleKey.toUpperCase()}.`});
+      DF.pushLog(draft,{type:"story",text:"You are torn into light. Then—cold stone, thin air, and the smell of ash."});
+    };
     const setStatus=(draft,status)=>{ if(!draft.run) return; draft.run.status=status; };
 
     const saveGame=()=>{try{DF.saveGame(state);showToast("Saved.");}catch{showToast("Save failed.");}};
-    const loadGame=()=>{try{const parsed=DF.loadGame(); if(!parsed) return showToast("No save found."); const next=withScreen(structuredClone(parsed)); setState(next); showToast("Loaded.");}catch{showToast("Load failed.");}};
+    const loadGame=()=>{try{const parsed=DF.loadGame(); if(!parsed) return showToast("No save found."); const next=withScreen(structuredClone(parsed)); primePrepPrompts(next); setState(next); showToast("Loaded.");}catch{showToast("Load failed.");}};
     const clearSave=()=>{try{DF.clearSave();showToast("Save cleared.");}catch{showToast("Could not clear.");}};
-    const hardReset=()=>{const next=withScreen(DF.mkNewGame(Date.now())); next.meta=state.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; setStatus(next,"exploring"); DF.pushLog(next,{type:"system",text:"New run started."}); setState(next); showToast("New run.");};
+    const hardReset=()=>{const next=withScreen(DF.mkNewGame(Date.now())); next.meta=state.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; setStatus(next,"exploring"); DF.pushLog(next,{type:"system",text:"New run started."}); primePrepPrompts(next); setState(next); showToast("New run.");};
     const toggleSidebar=()=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.ui.sidebarCollapsed=!d.ui.sidebarCollapsed; return d;});
-    const toggleMenuOverlay=()=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.ui.menuOpen=!d.ui.menuOpen; if(d.ui.menuOpen){d.ui.travelOpen=false; d.ui.showClassTree=false;} return d;});
-    const closeMenuOverlay=()=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.ui.menuOpen=false; return d;});
+    const toggleMenu=()=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.ui.menuOpen=!d.ui.menuOpen; if(d.ui.menuOpen){d.ui.travelOpen=false;} return d;});
 
-    useEffect(()=>{setState(prev=>{const d=structuredClone(prev); DF.pushLog(d,{type:"story",text:"Dragons rule the skies. Cities survive as beacons. The Mountain Expanse pays in blood and salvage."}); DF.pushLog(d,{type:"story",text:"Promotions require XP. Only extracted goods endure."}); return d;});},[]);
+    useEffect(()=>{setState(prev=>{const d=withScreen(structuredClone(prev)); DF.pushLog(d,{type:"story",text:"Dragons rule the skies. Cities survive as beacons. The Mountain Expanse pays in blood and salvage."}); DF.pushLog(d,{type:"story",text:"Promotions require XP. Only extracted goods endure."}); primePrepPrompts(d); return d;});},[]);
 
-    const chooseWeapon=(weaponKey)=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.player.weapon=weaponKey; recalcPlayer(d); d.phase="chooseStyle"; d.screen=screenForPhase(d.phase); d.ui.menuOpen=false; DF.pushLog(d,{type:"system",text:`Armament chosen: ${weaponKey.toUpperCase()}.`}); return d;});
-    const chooseStyle=(styleKey)=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.player.style=styleKey; recalcPlayer(d); d.phase="play"; d.screen=screenForPhase(d.phase); d.run.depth=1; const rng=DF.mulberry32(d.rngSeed^0xabc); d.run.nodeWeb=DF.createNodeWeb(rng); d.run.currentNodeId="n0"; const start=d.run.nodeWeb.nodes.find(n=>n.id==="n0"); d.run.site=start?.site||DF.pickSite(rng); d.run.danger="unknown"; setStatus(d,"exploring"); d.ui.showClassTree=false; d.ui.menuOpen=false; DF.pushLog(d,{type:"system",text:`Style chosen: ${styleKey.toUpperCase()}.`}); DF.pushLog(d,{type:"story",text:"You are torn into light. Then—cold stone, thin air, and the smell of ash."}); return d;});
+    const chooseWeapon=(weaponKey,promptId)=>setState(prev=>{const d=withScreen(structuredClone(prev)); applyWeaponChoice(d,weaponKey,promptId); return d;});
+    const chooseStyle=(styleKey,promptId)=>setState(prev=>{const d=withScreen(structuredClone(prev)); applyStyleChoice(d,styleKey,promptId); return d;});
+    const handlePromptChoice=(promptId,choice)=>{if(!promptId||!choice) return; setState(prev=>{const d=withScreen(structuredClone(prev)); const entry=d.run?.log?.find?.(l=>l.id===promptId); if(!entry||entry.resolved) return prev; if(entry.promptKey==="start-weapon"){applyWeaponChoice(d,choice.value||choice.id,promptId); return d;} if(entry.promptKey==="start-style"){applyStyleChoice(d,choice.value||choice.id,promptId); return d;} resolvePromptEntry(d,promptId,choice.id); return d;});};
 
     const takeDamage=(d,amount,reason)=>{d.player.hp=DF.clamp(d.player.hp-amount,0,d.player.hpMax); DF.pushLog(d,{type:"system",text:`You take ${amount} damage (${reason}).`}); if(d.player.hp<=0){d.phase="dead"; d.screen=screenForPhase(d.phase); const echoes=2+d.run.depth+Math.floor(d.player.gold/3); d.meta.echoes+=echoes; DF.pushLog(d,{type:"story",text:"☠️ You fall. The mountain keeps what you failed to extract."}); DF.pushLog(d,{type:"system",text:`You gain ${echoes} Echoes at the Beacon.`});}};
     const ensureEncounter=(draft)=>{
@@ -88,7 +130,7 @@
     const moveToNode=(id)=>setState(prev=>{const d=structuredClone(prev); if(d.run.inCombat){DF.pushLog(d,{type:"system",text:"You cannot travel during combat."}); return d;} const web=d.run.nodeWeb; if(!web) return prev; const cur=d.run.currentNodeId; if(cur===id){d.ui.travelOpen=false; setStatus(d,"exploring"); return d;} const adjacent=web.edges.some(e=>(e.a===cur&&e.b===id)||(e.b===cur&&e.a===id)); if(!adjacent){DF.pushLog(d,{type:"system",text:"You cannot reach that node from here."}); return d;} d.run.currentNodeId=id; d.ui.selectedNode=id; d.ui.travelOpen=false; const node=web.nodes.find(n=>n.id===id); if(node){d.run.site=node.site; d.run.depth+=1; for(const e of web.edges){ if(e.a===id){const nb=web.nodes.find(x=>x.id===e.b); if(nb) nb.revealed=true;} if(e.b===id){const nb=web.nodes.find(x=>x.id===e.a); if(nb) nb.revealed=true;} } d.run.danger=node.kind==="fight"?"unknown":"cleared"; setStatus(d,"exploring"); DF.pushLog(d,{type:"story",text:`You move to: ${node.site.name}.`}); DF.pushLog(d,{type:"story",text:node.site.tone}); if(node.kind==="station") DF.pushLog(d,{type:"system",text:"A dormant relay sits here. You may Extract."}); } return d;});
 
     const rest=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="play"||d.run.inCombat){DF.pushLog(d,{type:"system",text:"You cannot rest right now."}); return d;} setStatus(d,"resting"); const rng=DF.mulberry32(d.rngSeed^d.run.depth^0x3333^Date.now()); const heal=2; d.player.hp=DF.clamp(d.player.hp+heal,0,d.player.hpMax); DF.pushLog(d,{type:"system",text:`You rest (+${heal} HP).`}); if(rng()<0.5){ensureEncounter(d); return d;} DF.pushLog(d,{type:"story",text:"The wind passes. No footsteps."}); setStatus(d,"exploring"); return d;});
-    const toggleTravelOverlay=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="play") return d; if(d.run.inCombat){DF.pushLog(d,{type:"system",text:"Resolve combat before traveling."}); return d;} d.ui.travelOpen=!d.ui.travelOpen; if(d.ui.travelOpen){d.ui.menuOpen=false; d.ui.showClassTree=false;} setStatus(d,d.ui.travelOpen?"traveling":"exploring"); return d;});
+    const toggleTravelOverlay=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="play") return d; if(d.run.inCombat){DF.pushLog(d,{type:"system",text:"Resolve combat before traveling."}); return d;} d.ui.travelOpen=!d.ui.travelOpen; if(d.ui.travelOpen){d.ui.menuOpen=false;} setStatus(d,d.ui.travelOpen?"traveling":"exploring"); return d;});
     const closeTravelOverlay=()=>setState(prev=>{const d=structuredClone(prev); d.ui.travelOpen=false; if(!d.run.inCombat) setStatus(d,"exploring"); return d;});
     const buildStation=()=>setState(prev=>{const d=structuredClone(prev); const idx=d.player.inventory.indexOf("Relay Parts"); if(idx===-1){DF.pushLog(d,{type:"system",text:"You lack Relay Parts to build a Drop Station."}); return d;} d.player.inventory.splice(idx,1); d.player.stationBuilt+=1; DF.pushLog(d,{type:"story",text:"You assemble a crude Drop Station. A faint ward flickers to life."}); DF.pushLog(d,{type:"system",text:"You can now Extract here."}); return d;});
     const extract=()=>setState(prev=>{const d=structuredClone(prev); const items=d.player.inventory.splice(0); d.player.extracted.push(...items); DF.pushLog(d,{type:"system",text:`Extraction complete. Saved ${items.length} item(s).`}); return d;});
@@ -113,7 +155,7 @@
       return d;
     });
 
-    const reviveToStart=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="dead") return d; const next=withScreen(DF.mkNewGame(Date.now())); next.meta=d.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; setStatus(next,"exploring"); DF.pushLog(next,{type:"system",text:"You wake at the Beacon. The mountain waits."}); return next;});
+    const reviveToStart=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="dead") return d; const next=withScreen(DF.mkNewGame(Date.now())); next.meta=d.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; setStatus(next,"exploring"); DF.pushLog(next,{type:"system",text:"You wake at the Beacon. The mountain waits."}); primePrepPrompts(next); return next;});
     const metaSpend=(key,cost,apply)=>setState(prev=>{const d=structuredClone(prev); if(d.meta.echoes<cost){DF.pushLog(d,{type:"system",text:"Not enough Echoes."}); return d;} d.meta.echoes-=cost; apply(d); DF.pushLog(d,{type:"system",text:`Beacon upgraded: ${key}.`}); return d;});
 
     const currentNode=state.run.nodeWeb?.nodes.find(n=>n.id===state.run.currentNodeId);
@@ -131,21 +173,10 @@
     })();
     const {Card,Pill,Button}=DF;
 
-    const toggleLoadoutOverlay=()=>setState(prev=>{
-      const next=withScreen(structuredClone(prev));
-      next.ui.showClassTree=!next.ui.showClassTree;
-      if(next.ui.showClassTree){next.ui.travelOpen=false; next.ui.menuOpen=false;}
-      return next;
-    });
-
     const hudPills=[h(Pill,{key:"hp"},`HP ${state.player.hp}/${state.player.hpMax}`),h(Pill,{key:"xp"},`XP ${state.player.xp}`),h(Pill,{key:"echoes"},`Echoes ${state.meta.echoes}`),h(Pill,{key:"gold"},`Gold ${state.player.gold}`)];
 
     const chatLog=state.run.log||[];
-    const chatPanel=h("div",{className:"df-chat-shell"},
-      h("div",{className:"df-chat-shell__tabs"},["Log","Combat","System"].map(t=>h("button",{key:t,className:"df-chat-shell__tab",disabled:t!=="Log"},t))),
-      h("div",{className:"df-chat-shell__body"},chatLog.length?chatLog.slice(-30).reverse().map(l=>h("div",{key:l.id||Math.random(),className:"df-chat-shell__line"},h("span",{className:"df-chat-shell__bullet"},"•"),h("span",null,l.text||l.toString()))):h("div",{className:"df-chat-shell__empty"},"No events yet.")),
-      h("div",{className:"df-chat-shell__input"},h("input",{type:"text",disabled:true,placeholder:"Chat coming soon",className:"df-chat-shell__input-box"}))
-    );
+    const chatPanel=h(DF.EventLog,{log:chatLog,onPromptChoice:handlePromptChoice});
 
     const latestStory=(state.run.log?.find(l=>l.type==="story")||state.run.log?.[state.run.log.length-1]||{})?.text||"The mountain waits.";
     const worldCard=h("div",{className:"df-viewport-card df-playwindow__world"},
@@ -163,7 +194,7 @@
         ),
         h("div",{className:"df-viewport-card__hint"},
           h("div",{className:"df-viewport-card__hint-main"},latestStory),
-          h("div",{className:"df-viewport-card__hint-sub"},state.run.site?.name||"Pixel viewport scales to fit")
+          h("div",{className:"df-viewport-card__hint-sub"},modeLabel)
         )
       )
     );
@@ -182,24 +213,10 @@
         h(Pill,null,`HP ${state.player.hp}/${state.player.hpMax}`),
         h(Pill,null,`XP ${state.player.xp}`),
         h(Pill,null,`Gold ${state.player.gold}`)
-      ),
-      h("div",{className:"df-panel__note"},"Primary interactions now live inside the play window. Use toggles to open overlays.")
+      )
     );
 
     const viewportContent=h(React.Fragment,null,worldCard,infoCard);
-
-    const loadoutOverlay=h("div",{className:"df-loadout-overlay"},
-      h("div",{className:"df-panel__section-title"},"Class & Loadout"),
-      h("div",{className:"df-info-grid"},
-        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Weapon"),h("div",{className:"df-info-value"},weaponObj?.name||"Unbound")),
-        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Style"),h("div",{className:"df-info-value"},styleObj?.name||"Untrained")),
-        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Element"),h("div",{className:"df-info-value"},elementObj?.name||"None")),
-        h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Title"),h("div",{className:"df-info-value"},state.player.title||"Unbound"))
-      ),
-      h("div",{className:"df-panel__section-title"},"Skills"),
-      h("div",{className:"df-skill-list"},skills.map(s=>h("div",{key:s.key,className:"df-skill-card"},h("div",{className:"df-skill-card__top"},h("div",{className:"df-skill-card__title"},s.name),h("span",{className:"df-skill-card__kind"},s.kind)),h("div",{className:"df-skill-card__desc"},s.desc)))),
-      h("div",{className:"df-panel__note"},"Loadout overlay lives inside the play window for class changes and confirmations.")
-    );
     const travelOverlay=state.ui.travelOpen?h(DF.TravelOverlay,{
       currentNode,
       options:(state.run.nodeWeb?.nodes||[]).filter(n=>travelOptions.includes(n.id)),
@@ -213,7 +230,7 @@
     const screens={...defaultScreens,...(DF.ui?.screens||{})};
     const ScreenComponent=screens[screenKey];
     const screenProps=({
-      PrepScreen:{state,weaponObj,onChooseWeapon:chooseWeapon,onChooseStyle:chooseStyle,onToggleClassTree:toggleLoadoutOverlay},
+      PrepScreen:{state},
       PlayScreen:{state},
       DeadScreen:{state,onMetaSpend:metaSpend,onWake:reviveToStart}
     })[screenKey]||{state};
@@ -223,29 +240,13 @@
     let overlayMode="modal";
     if(shouldRenderScreen){overlayContent=h(ScreenComponent,{key:screenKey,...screenProps}); if(screenKey==="PrepScreen") overlayMode="dock";}
     else if(state.ui.travelOpen){overlayContent=travelOverlay;}
-    else if(state.ui.menuOpen){overlayContent=h("div",{className:"df-menu-overlay"},
-      h("div",{className:"df-panel__section-title"},"Main Menu"),
-      h("div",{className:"df-menu-overlay__grid"},
-        h(Button,{variant:"ghost",onClick:saveGame},"Save Run"),
-        h(Button,{variant:"ghost",onClick:loadGame},"Load Run"),
-        h(Button,{variant:"ghost",onClick:clearSave},"Clear Save"),
-        h(Button,{variant:"danger",onClick:hardReset},"New Run")
-      ),
-      h("div",{className:"df-panel__note"},"Menu + help now live in the sidebar. Close to return to the field."),
-      h("div",{className:"df-menu-overlay__actions"},
-        h(Button,{variant:"ghost",onClick:closeMenuOverlay},"Close Menu")
-      )
-    );}
-    else if(state.ui.showClassTree){overlayContent=loadoutOverlay;}
 
     const canTravel=state.phase==="play"&&!state.run.inCombat;
     const actionButtons=(()=>{
       if(state.phase==="dead") return [
         {key:"wake",label:"Wake at Beacon",hint:"1",onClick:reviveToStart}
       ];
-      if(state.phase!=="play") return [
-        {key:"loadout",label:"Loadout Overlay",hint:"1",onClick:toggleLoadoutOverlay}
-      ];
+      if(state.phase!=="play") return [];
       const contextAction=state.run.inCombat
         ? {key:"brace",label:"Brace",hint:"5",onClick:()=>combatAction("defend")}
         : canExtractHere
@@ -255,19 +256,26 @@
         {key:"attack",label:"Attack",hint:"1",onClick:()=>combatAction("attack"),disabled:!state.run.inCombat},
         {key:"rest",label:"Rest",hint:"2",onClick:rest,disabled:state.run.inCombat},
         {key:"travel",label:state.ui.travelOpen?"Close Travel":"Travel",hint:"3",onClick:toggleTravelOverlay,disabled:!canTravel&& !state.ui.travelOpen},
-        {key:"inventory",label:state.ui.showClassTree?"Hide Loadout":"Inventory",hint:"4",onClick:toggleLoadoutOverlay,disabled:state.phase!=="play"},
         {...contextAction,disabled:contextAction.key!=="brace"&&state.run.inCombat}
       ];
     })();
 
     const playHeaderTitle=state.phase==="dead"?"Beacon":state.run.site?.name||"Arcane Run";
     const playHeaderSubtitle=state.phase==="play"?`${modeLabel} • Depth ${state.run.depth||1}`:subtitle;
-    const stageControls=[h(Button,{variant:"ghost",key:"loadout",onClick:toggleLoadoutOverlay},state.ui.showClassTree?"Hide Loadout":"Show Loadout")];
-
     const sidebarContent=[
       h("div",{key:"menu-button",className:"df-sidebar__panel df-sidebar__panel--menu"},
-        h(Button,{variant:"ghost",onClick:toggleMenuOverlay},state.ui.menuOpen?"Close Menu":"Open Menu")
+        h(Button,{variant:"ghost",onClick:toggleMenu},state.ui.menuOpen?"Close Menu":"Open Menu")
       ),
+      state.ui.menuOpen?h("div",{key:"menu-panel",className:"df-sidebar__panel df-sidebar__panel--menu-open"},
+        h(Card,{title:"Menu",subtitle:"Run actions"},
+          h("div",{className:"df-menu-list"},
+            h(Button,{variant:"ghost",onClick:saveGame},"Save Run"),
+            h(Button,{variant:"ghost",onClick:loadGame},"Load Run"),
+            h(Button,{variant:"ghost",onClick:clearSave},"Clear Save"),
+            h(Button,{variant:"danger",onClick:hardReset},"New Run")
+          )
+        )
+      ):null,
       h("div",{key:"help",className:"df-sidebar__panel df-sidebar__panel--help"},h(DF.HelpPanel,null)),
       h("div",{key:"vitals",className:"df-sidebar__panel df-sidebar__panel--vitals"},
         h(Card,{title:"Vitals",subtitle:"Quick readout"},
@@ -277,11 +285,10 @@
             h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Echoes"),h("div",{className:"df-info-value"},state.meta.echoes))
           )
         )
-      ),
-      h("div",{key:"log",className:"df-sidebar__panel df-sidebar__panel--log"},h(DF.EventLog,{log:chatLog.slice(-40).reverse()}))
-    ];
+      )
+    ].filter(Boolean);
 
-    const viewportShell=h(DF.PlayWindow,{title:playHeaderTitle,subtitle:playHeaderSubtitle,viewport:viewportContent,overlay:overlayContent,overlayMode,controls:stageControls,actions:actionButtons,wipeKey:screenKey});
+    const viewportShell=h(DF.PlayWindow,{title:playHeaderTitle,subtitle:playHeaderSubtitle,viewport:viewportContent,overlay:overlayContent,overlayMode,actions:actionButtons,wipeKey:screenKey});
 
     return h(ErrorBoundary,null,
       h("div",{className:"df-app df-ui"},
