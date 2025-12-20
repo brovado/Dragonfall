@@ -13,6 +13,8 @@
       if(!draft.run.status) draft.run.status="exploring";
       if(!draft.ui) draft.ui={};
       if(typeof draft.ui.travelOpen!=="boolean") draft.ui.travelOpen=false;
+      if(typeof draft.ui.menuOpen!=="boolean") draft.ui.menuOpen=false;
+      if(typeof draft.ui.sidebarCollapsed!=="boolean") draft.ui.sidebarCollapsed=false;
       return draft;
     };
 
@@ -53,11 +55,14 @@
     const loadGame=()=>{try{const parsed=DF.loadGame(); if(!parsed) return showToast("No save found."); const next=withScreen(structuredClone(parsed)); setState(next); showToast("Loaded.");}catch{showToast("Load failed.");}};
     const clearSave=()=>{try{DF.clearSave();showToast("Save cleared.");}catch{showToast("Could not clear.");}};
     const hardReset=()=>{const next=withScreen(DF.mkNewGame(Date.now())); next.meta=state.meta; next.player.hpMax=10+(next.meta.legacy.startHP||0); next.player.hp=next.player.hpMax; setStatus(next,"exploring"); DF.pushLog(next,{type:"system",text:"New run started."}); setState(next); showToast("New run.");};
+    const toggleSidebar=()=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.ui.sidebarCollapsed=!d.ui.sidebarCollapsed; return d;});
+    const toggleMenuOverlay=()=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.ui.menuOpen=!d.ui.menuOpen; if(d.ui.menuOpen){d.ui.travelOpen=false; d.ui.showClassTree=false;} return d;});
+    const closeMenuOverlay=()=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.ui.menuOpen=false; return d;});
 
     useEffect(()=>{setState(prev=>{const d=structuredClone(prev); DF.pushLog(d,{type:"story",text:"Dragons rule the skies. Cities survive as beacons. The Mountain Expanse pays in blood and salvage."}); DF.pushLog(d,{type:"story",text:"Promotions require XP. Only extracted goods endure."}); return d;});},[]);
 
-    const chooseWeapon=(weaponKey)=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.player.weapon=weaponKey; recalcPlayer(d); d.phase="chooseStyle"; d.screen=screenForPhase(d.phase); DF.pushLog(d,{type:"system",text:`Armament chosen: ${weaponKey.toUpperCase()}.`}); return d;});
-    const chooseStyle=(styleKey)=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.player.style=styleKey; recalcPlayer(d); d.phase="play"; d.screen=screenForPhase(d.phase); d.run.depth=1; const rng=DF.mulberry32(d.rngSeed^0xabc); d.run.nodeWeb=DF.createNodeWeb(rng); d.run.currentNodeId="n0"; const start=d.run.nodeWeb.nodes.find(n=>n.id==="n0"); d.run.site=start?.site||DF.pickSite(rng); d.run.danger="unknown"; setStatus(d,"exploring"); d.ui.showClassTree=false; DF.pushLog(d,{type:"system",text:`Style chosen: ${styleKey.toUpperCase()}.`}); DF.pushLog(d,{type:"story",text:"You are torn into light. Then—cold stone, thin air, and the smell of ash."}); return d;});
+    const chooseWeapon=(weaponKey)=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.player.weapon=weaponKey; recalcPlayer(d); d.phase="chooseStyle"; d.screen=screenForPhase(d.phase); d.ui.menuOpen=false; DF.pushLog(d,{type:"system",text:`Armament chosen: ${weaponKey.toUpperCase()}.`}); return d;});
+    const chooseStyle=(styleKey)=>setState(prev=>{const d=withScreen(structuredClone(prev)); d.player.style=styleKey; recalcPlayer(d); d.phase="play"; d.screen=screenForPhase(d.phase); d.run.depth=1; const rng=DF.mulberry32(d.rngSeed^0xabc); d.run.nodeWeb=DF.createNodeWeb(rng); d.run.currentNodeId="n0"; const start=d.run.nodeWeb.nodes.find(n=>n.id==="n0"); d.run.site=start?.site||DF.pickSite(rng); d.run.danger="unknown"; setStatus(d,"exploring"); d.ui.showClassTree=false; d.ui.menuOpen=false; DF.pushLog(d,{type:"system",text:`Style chosen: ${styleKey.toUpperCase()}.`}); DF.pushLog(d,{type:"story",text:"You are torn into light. Then—cold stone, thin air, and the smell of ash."}); return d;});
 
     const takeDamage=(d,amount,reason)=>{d.player.hp=DF.clamp(d.player.hp-amount,0,d.player.hpMax); DF.pushLog(d,{type:"system",text:`You take ${amount} damage (${reason}).`}); if(d.player.hp<=0){d.phase="dead"; d.screen=screenForPhase(d.phase); const echoes=2+d.run.depth+Math.floor(d.player.gold/3); d.meta.echoes+=echoes; DF.pushLog(d,{type:"story",text:"☠️ You fall. The mountain keeps what you failed to extract."}); DF.pushLog(d,{type:"system",text:`You gain ${echoes} Echoes at the Beacon.`});}};
     const ensureEncounter=(draft)=>{
@@ -83,7 +88,7 @@
     const moveToNode=(id)=>setState(prev=>{const d=structuredClone(prev); if(d.run.inCombat){DF.pushLog(d,{type:"system",text:"You cannot travel during combat."}); return d;} const web=d.run.nodeWeb; if(!web) return prev; const cur=d.run.currentNodeId; if(cur===id){d.ui.travelOpen=false; setStatus(d,"exploring"); return d;} const adjacent=web.edges.some(e=>(e.a===cur&&e.b===id)||(e.b===cur&&e.a===id)); if(!adjacent){DF.pushLog(d,{type:"system",text:"You cannot reach that node from here."}); return d;} d.run.currentNodeId=id; d.ui.selectedNode=id; d.ui.travelOpen=false; const node=web.nodes.find(n=>n.id===id); if(node){d.run.site=node.site; d.run.depth+=1; for(const e of web.edges){ if(e.a===id){const nb=web.nodes.find(x=>x.id===e.b); if(nb) nb.revealed=true;} if(e.b===id){const nb=web.nodes.find(x=>x.id===e.a); if(nb) nb.revealed=true;} } d.run.danger=node.kind==="fight"?"unknown":"cleared"; setStatus(d,"exploring"); DF.pushLog(d,{type:"story",text:`You move to: ${node.site.name}.`}); DF.pushLog(d,{type:"story",text:node.site.tone}); if(node.kind==="station") DF.pushLog(d,{type:"system",text:"A dormant relay sits here. You may Extract."}); } return d;});
 
     const rest=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="play"||d.run.inCombat){DF.pushLog(d,{type:"system",text:"You cannot rest right now."}); return d;} setStatus(d,"resting"); const rng=DF.mulberry32(d.rngSeed^d.run.depth^0x3333^Date.now()); const heal=2; d.player.hp=DF.clamp(d.player.hp+heal,0,d.player.hpMax); DF.pushLog(d,{type:"system",text:`You rest (+${heal} HP).`}); if(rng()<0.5){ensureEncounter(d); return d;} DF.pushLog(d,{type:"story",text:"The wind passes. No footsteps."}); setStatus(d,"exploring"); return d;});
-    const toggleTravelOverlay=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="play") return d; if(d.run.inCombat){DF.pushLog(d,{type:"system",text:"Resolve combat before traveling."}); return d;} d.ui.travelOpen=!d.ui.travelOpen; setStatus(d,d.ui.travelOpen?"traveling":"exploring"); return d;});
+    const toggleTravelOverlay=()=>setState(prev=>{const d=structuredClone(prev); if(d.phase!=="play") return d; if(d.run.inCombat){DF.pushLog(d,{type:"system",text:"Resolve combat before traveling."}); return d;} d.ui.travelOpen=!d.ui.travelOpen; if(d.ui.travelOpen){d.ui.menuOpen=false; d.ui.showClassTree=false;} setStatus(d,d.ui.travelOpen?"traveling":"exploring"); return d;});
     const closeTravelOverlay=()=>setState(prev=>{const d=structuredClone(prev); d.ui.travelOpen=false; if(!d.run.inCombat) setStatus(d,"exploring"); return d;});
     const buildStation=()=>setState(prev=>{const d=structuredClone(prev); const idx=d.player.inventory.indexOf("Relay Parts"); if(idx===-1){DF.pushLog(d,{type:"system",text:"You lack Relay Parts to build a Drop Station."}); return d;} d.player.inventory.splice(idx,1); d.player.stationBuilt+=1; DF.pushLog(d,{type:"story",text:"You assemble a crude Drop Station. A faint ward flickers to life."}); DF.pushLog(d,{type:"system",text:"You can now Extract here."}); return d;});
     const extract=()=>setState(prev=>{const d=structuredClone(prev); const items=d.player.inventory.splice(0); d.player.extracted.push(...items); DF.pushLog(d,{type:"system",text:`Extraction complete. Saved ${items.length} item(s).`}); return d;});
@@ -126,10 +131,14 @@
     })();
     const {Card,Pill,Button}=DF;
 
-    const toggleLoadoutOverlay=()=>setState(prev=>({...prev,ui:{...prev.ui,showClassTree:!prev.ui.showClassTree}}));
+    const toggleLoadoutOverlay=()=>setState(prev=>{
+      const next=withScreen(structuredClone(prev));
+      next.ui.showClassTree=!next.ui.showClassTree;
+      if(next.ui.showClassTree){next.ui.travelOpen=false; next.ui.menuOpen=false;}
+      return next;
+    });
 
     const hudPills=[h(Pill,{key:"hp"},`HP ${state.player.hp}/${state.player.hpMax}`),h(Pill,{key:"xp"},`XP ${state.player.xp}`),h(Pill,{key:"echoes"},`Echoes ${state.meta.echoes}`),h(Pill,{key:"gold"},`Gold ${state.player.gold}`)];
-    const topActions=[h(Button,{key:"save",onClick:saveGame,variant:"ghost"},"Save"),h(Button,{key:"load",onClick:loadGame,variant:"ghost"},"Load"),h(Button,{key:"clear",onClick:clearSave,variant:"ghost"},"Clear"),h(Button,{key:"new",onClick:hardReset,variant:"danger"},"New Run")];
 
     const chatLog=state.run.log||[];
     const chatPanel=h("div",{className:"df-chat-shell"},
@@ -211,9 +220,23 @@
     const isDefaultScreen=ScreenComponent===defaultScreens[screenKey];
     const shouldRenderScreen=!!ScreenComponent && (screenKey!=="PlayScreen" || !isDefaultScreen);
     let overlayContent=null;
-    if(state.ui.travelOpen) overlayContent=travelOverlay;
-    else if(shouldRenderScreen) overlayContent=h(ScreenComponent,{key:screenKey,...screenProps});
-    else if(state.ui.showClassTree) overlayContent=loadoutOverlay;
+    let overlayMode="modal";
+    if(shouldRenderScreen){overlayContent=h(ScreenComponent,{key:screenKey,...screenProps}); if(screenKey==="PrepScreen") overlayMode="dock";}
+    else if(state.ui.travelOpen){overlayContent=travelOverlay;}
+    else if(state.ui.menuOpen){overlayContent=h("div",{className:"df-menu-overlay"},
+      h("div",{className:"df-panel__section-title"},"Main Menu"),
+      h("div",{className:"df-menu-overlay__grid"},
+        h(Button,{variant:"ghost",onClick:saveGame},"Save Run"),
+        h(Button,{variant:"ghost",onClick:loadGame},"Load Run"),
+        h(Button,{variant:"ghost",onClick:clearSave},"Clear Save"),
+        h(Button,{variant:"danger",onClick:hardReset},"New Run")
+      ),
+      h("div",{className:"df-panel__note"},"Menu + help now live in the sidebar. Close to return to the field."),
+      h("div",{className:"df-menu-overlay__actions"},
+        h(Button,{variant:"ghost",onClick:closeMenuOverlay},"Close Menu")
+      )
+    );}
+    else if(state.ui.showClassTree){overlayContent=loadoutOverlay;}
 
     const canTravel=state.phase==="play"&&!state.run.inCombat;
     const actionButtons=(()=>{
@@ -242,27 +265,23 @@
     const stageControls=[h(Button,{variant:"ghost",key:"loadout",onClick:toggleLoadoutOverlay},state.ui.showClassTree?"Hide Loadout":"Show Loadout")];
 
     const sidebarContent=[
-      h(Card,{key:"toggles",title:"Sidebar Toggles",subtitle:"Panels + overlays"},
-        h("div",{className:"df-toggle-list"},
-          h(Button,{variant:"ghost",onClick:toggleLoadoutOverlay},"Toggle Loadout"),
-          h(Button,{variant:"ghost",onClick:()=>setState(p=>({...p,ui:{...p.ui,showPromotion:!p.ui.showPromotion}})),disabled:state.phase!=="play"||state.player.xp<state.player.nextPromoAt||state.player.promoTier>0},"Promo Check"),
-          h(Button,{variant:"ghost",onClick:saveGame},"Quick Save")
+      h("div",{key:"menu-button",className:"df-sidebar__panel df-sidebar__panel--menu"},
+        h(Button,{variant:"ghost",onClick:toggleMenuOverlay},state.ui.menuOpen?"Close Menu":"Open Menu")
+      ),
+      h("div",{key:"help",className:"df-sidebar__panel df-sidebar__panel--help"},h(DF.HelpPanel,null)),
+      h("div",{key:"vitals",className:"df-sidebar__panel df-sidebar__panel--vitals"},
+        h(Card,{title:"Vitals",subtitle:"Quick readout"},
+          h("div",{className:"df-info-grid"},
+            h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"HP"),h("div",{className:"df-info-value"},`${state.player.hp}/${state.player.hpMax}`)),
+            h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"XP"),h("div",{className:"df-info-value"},state.player.xp)),
+            h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Echoes"),h("div",{className:"df-info-value"},state.meta.echoes))
+          )
         )
       ),
-      h(Card,{key:"vitals",title:"Vitals",subtitle:"Quick readout"},
-        h("div",{className:"df-info-grid"},
-          h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"HP"),h("div",{className:"df-info-value"},`${state.player.hp}/${state.player.hpMax}`)),
-          h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"XP"),h("div",{className:"df-info-value"},state.player.xp)),
-          h("div",{className:"df-info-pair"},h("div",{className:"df-info-label"},"Echoes"),h("div",{className:"df-info-value"},state.meta.echoes))
-        )
-      ),
-      h("details",{key:"help",className:"df-side-collapse"},
-        h("summary",null,"Help & Tips"),
-        h("div",{className:"df-side-collapse__body"},h(DF.HelpPanel,null))
-      )
+      h("div",{key:"log",className:"df-sidebar__panel df-sidebar__panel--log"},h(DF.EventLog,{log:chatLog.slice(-40).reverse()}))
     ];
 
-    const viewportShell=h(DF.PlayWindow,{title:playHeaderTitle,subtitle:playHeaderSubtitle,viewport:viewportContent,overlay:overlayContent,controls:stageControls,actions:actionButtons,wipeKey:`${state.phase}-${state.run.inCombat?"combat":"field"}`});
+    const viewportShell=h(DF.PlayWindow,{title:playHeaderTitle,subtitle:playHeaderSubtitle,viewport:viewportContent,overlay:overlayContent,overlayMode,controls:stageControls,actions:actionButtons,wipeKey:screenKey});
 
     return h(ErrorBoundary,null,
       h("div",{className:"df-app df-ui"},
@@ -271,11 +290,12 @@
         subtitle:subtitle,
         versionLabel:`Arcane Run • v${DF.VERSION}`,
         hudPills,
-        topActions,
-        keyboardHints:["[Esc] Menu","[H] Help"],
+        keyboardHints:[],
         viewport:viewportShell,
         sidebar:sidebarContent,
-        bottom:chatPanel
+        bottom:chatPanel,
+        sidebarCollapsed:state.ui.sidebarCollapsed,
+        onToggleSidebar:toggleSidebar
       }),
       h(DF.PromotionModal,{state,onLater:()=>setState(p=>({...p,ui:{...p.ui,showPromotion:false}})),onChooseElement:choosePromotionElement,onChooseCross:choosePromotionCross}),
       h(DF.Toast,{toast})

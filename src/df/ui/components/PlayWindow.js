@@ -4,7 +4,7 @@
   if (!React) return;
   const h = React.createElement;
 
-  DF.PlayWindow = ({ title, subtitle, viewport, overlay, controls, actions, wipeKey }) =>
+  DF.PlayWindow = ({ title, subtitle, viewport, overlay, overlayMode = "modal", controls, actions, wipeKey }) =>
     h(
       "div",
       { className: "df-playwindow df-ui" },
@@ -27,8 +27,26 @@
         overlay
           ? h(
               "div",
-              { className: "df-playwindow__overlay" },
-              h("div", { className: "df-playwindow__panel" }, overlay)
+              {
+                className: [
+                  "df-playwindow__overlay",
+                  overlayMode === "dock" ? "df-playwindow__overlay--dock" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" "),
+              },
+              h(
+                "div",
+                {
+                  className: [
+                    "df-playwindow__panel",
+                    overlayMode === "dock" ? "df-playwindow__panel--dock" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" "),
+                },
+                overlay
+              )
             )
           : null
       ),
