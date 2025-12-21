@@ -9,7 +9,7 @@
     const [phase, setPhase] = useState("idle");
     const [visible, setVisible] = useState(false);
     const token = wipeState?.token || wipeState?.scene || wipeState?.mode || "wipe";
-    const transitionImg = DF?.assets?.images?.ui_transition;
+    const transitionImg = typeof DF.getImage === "function" ? DF.getImage("ui_transition") : DF?.assets?.images?.ui_transition;
     const src = transitionImg?.src;
 
     useEffect(() => {

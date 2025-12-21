@@ -4,7 +4,8 @@
   const { Button } = DF;
 
   const DeadScreen = ({ onRetry, onQuit }) => {
-    const background = DF?.assets?.images?.ui_gameover;
+    const background =
+      typeof DF.getImage === "function" ? DF.getImage("ui_gameover") : DF?.assets?.images?.ui_gameover;
     const src = background?.src;
     return h(
       "div",

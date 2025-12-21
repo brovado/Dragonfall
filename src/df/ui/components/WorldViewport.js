@@ -73,14 +73,15 @@
         ctx.fillStyle = "#0b0f19";
         ctx.fillRect(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
 
-        const tileset = DF?.assets?.images?.town_tiles || null;
+        const tileset = typeof DF.getImage === "function" ? DF.getImage("town_tiles") : DF?.assets?.images?.town_tiles || null;
         for (let y = 0; y < TEST_MAP.length; y += 1) {
           for (let x = 0; x < TEST_MAP[y].length; x += 1) {
             drawTile(ctx, tileset, TEST_MAP[y][x], x * TILE_SIZE, y * TILE_SIZE);
           }
         }
 
-        const playerSprite = DF?.assets?.images?.main_pc || null;
+        const playerSprite =
+          typeof DF.getImage === "function" ? DF.getImage("main_pc") : DF?.assets?.images?.main_pc || null;
         const centerX = Math.floor((TEST_MAP[0]?.length || 1) / 2) * TILE_SIZE;
         const centerY = Math.floor(TEST_MAP.length / 2) * TILE_SIZE;
 

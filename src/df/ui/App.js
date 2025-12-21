@@ -51,6 +51,8 @@
     const [toast, setToast] = useState(null);
     const toastTimer = useRef(null);
     const stateRef = useRef(state);
+    const missingAssetsRef = useRef(new Set());
+    const scene = state.ui.scene || defaultScene;
 
     const setStateSafe = React.useCallback(
       (updater) =>
@@ -78,6 +80,33 @@
       DF.director.act("CHECK_NODE");
     }, [state.phase, state.run.inCombat, state.run.danger, state.run.currentNodeId]);
 
+    const imageFor = React.useCallback(
+      (key) => (typeof DF.getImage === "function" ? DF.getImage(key, { warn: false }) : DF.assets?.images?.[key]),
+      []
+    );
+
+    const warnMissingAsset = React.useCallback(
+      (key) => {
+        if (!key || missingAssetsRef.current.has(key)) return;
+        missingAssetsRef.current.add(key);
+        setStateSafe((draft) => {
+          if (!draft?.run) return draft;
+          DF.pushLog(draft, { type: "system", text: `Missing asset: ${key}` });
+          return draft;
+        });
+      },
+      [setStateSafe]
+    );
+
+    useEffect(() => {
+      const keysToConfirm = ["ui_title", "ui_transition", "ui_gameover", "town_tiles", "main_pc"];
+      keysToConfirm.forEach((k) => {
+        if (!imageFor(k)) warnMissingAsset(k);
+      });
+    }, [imageFor, warnMissingAsset, scene]);
+
+    const imageSrcFor = React.useCallback((key) => imageFor(key)?.src || null, [imageFor]);
+
     const travelOptions = useMemo(
       () => DF.director?.getTravelOptions?.(state) || [],
       [state, state.run?.nodeWeb, state.run?.currentNodeId, state.ui?.selectedNode]
@@ -88,8 +117,6 @@
       if (toastTimer.current) clearTimeout(toastTimer.current);
       toastTimer.current = setTimeout(() => setToast(null), 2200);
     };
-
-    const scene = state.ui.scene || defaultScene;
 
     const subtitle =
       scene === DF.SCENES.TITLE
@@ -181,24 +208,41 @@
             )
           )
         );
-      if (scene === DF.SCENES.TITLE) return null;
+      if (scene === DF.SCENES.TITLE) {
+        return h(
+          "div",
+          { className: "df-title-card" },
+          h("div", { className: "df-title-card__eyebrow" }, "Beacon Preview"),
+          h("div", { className: "df-title-card__title" }, "Dragonfall"),
+          h("div", { className: "df-title-card__subtitle" }, "Light the beacon. Brave the mountain."),
+          h(
+            "div",
+            { className: "df-title-card__actions" },
+            h(
+              "button",
+              { className: "df-title-card__btn", onClick: () => DF.director.act("START_RUN"), type: "button" },
+              "Start Run"
+            )
+          )
+        );
+      }
       if (scene === DF.SCENES.GAMEOVER) {
-        const img = DF.assets?.images?.ui_gameover;
+        const imgSrc = imageSrcFor("ui_gameover");
         return h(
           "div",
           {
-            style: {
-              backgroundImage: img ? `url(${img.src})` : "none",
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-              width: "100%",
-              height: "100%",
-            },
+            className: "df-title-screen",
+            style: imgSrc
+              ? {
+                  backgroundImage: `url(${imgSrc})`,
+                }
+              : undefined,
           },
           overlayCard("Run Ended", [
             { key: "retry", label: "Retry", primary: true, onClick: () => DF.director.act("RUN_RETRY") },
             { key: "quit", label: "Quit to Prep", onClick: () => DF.director.act("RUN_QUIT") },
-          ])
+          ]),
+          !imgSrc ? h("div", { className: "df-title-screen__fallback" }, "Beacon offline") : null
         );
       }
       if (state.ui.travelOpen) {
@@ -229,16 +273,19 @@
     const worldLayer = (() => {
       if (scene === DF.SCENES.TITLE || scene === DF.SCENES.GAMEOVER) {
         const imgKey = scene === DF.SCENES.GAMEOVER ? "ui_gameover" : "ui_title";
-        const img = DF.assets?.images?.[imgKey];
-        return h("div", {
-          style: {
-            width: "100%",
-            height: "100%",
-            backgroundImage: img ? `url(${img.src})` : "none",
-            backgroundSize: "cover",
-            backgroundPosition: "center",
+        const imgSrc = imageSrcFor(imgKey);
+        return h(
+          "div",
+          {
+            className: "df-title-screen",
+            style: imgSrc
+              ? {
+                  backgroundImage: `url(${imgSrc})`,
+                }
+              : undefined,
           },
-        });
+          !imgSrc ? h("div", { className: "df-title-screen__fallback" }, "TITLE OK • Background missing") : null
+        );
       }
       if (scene === DF.SCENES.PREP) {
         return h(DF.PrepScreen, { state });
@@ -271,6 +318,7 @@
                   promptKey: "title-start",
                   text: "Press Start to enter the Beacon.",
                   choices: [{ id: "start", label: "Start Run", primary: true }],
+                  t: Date.now(),
                   resolved: false,
                 },
               ],
@@ -284,7 +332,7 @@
         ? h(
             "div",
             { className: "df-playwindow__dialog-shell" },
-            h("div", { className: "df-log-line df-log-line--system" }, "Run failed. Try again?")
+            h("div", { className: "df-log-line df-log-line--system", "data-ts": Date.now() }, "Run failed. Try again?")
           )
         : dialogLayer;
 

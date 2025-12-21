@@ -10,7 +10,7 @@
     choice.sub?h("div",{className:"df-log-choice__sub"},choice.sub):null
   );
   DF.EventLog=({log,onPromptChoice})=>{
-    const lines=Array.isArray(log)?log:[];
+    const lines=Array.isArray(log)?[...log].sort((a,b)=>(b?.t||0)-(a?.t||0)):[];
     return h("div",{className:"df-dialog-log"},
       (!lines||lines.length===0)?h("div",{className:"df-log-empty"},"Awaiting input…"):
       lines.map(l=>{
