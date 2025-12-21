@@ -99,6 +99,15 @@
       toastTimer.current = setTimeout(() => setToast(null), 2200);
     };
 
+    const startRunFromTitle = () => {
+      DF.transitionTo(DF.SCENES.PREP);
+      setState((prev) => {
+        const d = withScreen(structuredClone(prev));
+        primePrepPrompts(d);
+        return d;
+      });
+    };
+
     const recalcPlayer = (d) => {
       const w = DF.WEAPONS.find((x) => x.key === d.player.weapon);
       const bias = w?.bias || { might: 0, finesse: 0, wits: 0, will: 0 };
@@ -683,36 +692,7 @@
             )
           )
         );
-      if (scene === DF.SCENES.TITLE) {
-        const img = DF.assets?.images?.ui_title;
-        return h(
-          "div",
-          {
-            style: {
-              backgroundImage: img ? `url(${img.src})` : "none",
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-              width: "100%",
-              height: "100%",
-            },
-          },
-          overlayCard("Dragonfall", [
-            {
-              key: "start",
-              label: "Start Run",
-              primary: true,
-              onClick: () => {
-                DF.transitionTo(DF.SCENES.PREP);
-                setState((prev) => {
-                  const d = withScreen(structuredClone(prev));
-                  primePrepPrompts(d);
-                  return d;
-                });
-              },
-            },
-          ])
-        );
-      }
+      if (scene === DF.SCENES.TITLE) return null;
       if (scene === DF.SCENES.GAMEOVER) {
         const img = DF.assets?.images?.ui_gameover;
         return h(
@@ -815,7 +795,22 @@
         ? h(
             "div",
             { className: "df-playwindow__dialog-shell" },
-            h("div", { className: "df-log-line" }, "Press Start to enter the Beacon.")
+            h(DF.EventLog, {
+              log: [
+                {
+                  id: "title-start",
+                  type: "prompt",
+                  promptKey: "title-start",
+                  text: "Press Start to enter the Beacon.",
+                  choices: [{ id: "start", label: "Start Run", primary: true }],
+                  resolved: false,
+                },
+              ],
+              onPromptChoice: (_, choice) => {
+                if (!choice) return;
+                startRunFromTitle();
+              },
+            })
           )
         : scene === DF.SCENES.GAMEOVER
         ? h(
