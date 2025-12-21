@@ -4,8 +4,17 @@
   if (!React) return;
   const h = React.createElement;
 
-  const TravelOverlay = ({ currentNode, options = [], allNodes = [], onTravel, onClose }) => {
+  const TravelOverlay = ({
+    currentNode,
+    options = [],
+    allNodes = [],
+    selectedId = null,
+    onSelect,
+    onConfirm,
+    onClose,
+  }) => {
     const hasRoutes = options.length > 0;
+    const selected = options.find((n) => n.id === selectedId);
 
     return h(
       "div",
@@ -35,8 +44,18 @@
         hasRoutes
           ? options.map((node) =>
               h(
-                "div",
-                { key: node.id, className: "df-travel__option" },
+                "button",
+                {
+                  key: node.id,
+                  className: [
+                    "df-travel__option",
+                    selected && selected.id === node.id ? "df-travel__option--selected" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" "),
+                  onClick: () => typeof onSelect === "function" && onSelect(node.id),
+                  type: "button",
+                },
                 h(
                   "div",
                   null,
@@ -47,15 +66,7 @@
                     [node.kind || "site", node.cleared ? "cleared" : "live"].join(" • ")
                   )
                 ),
-                h(
-                  Button || "button",
-                  {
-                    variant: "primary",
-                    onClick: () => typeof onTravel === "function" && onTravel(node.id),
-                    disabled: typeof onTravel !== "function",
-                  },
-                  "Travel"
-                )
+                h("div", { className: "df-travel__option-cta" }, node.id === selected?.id ? "Selected" : "Select")
               )
             )
           : h(
@@ -66,13 +77,26 @@
                 : "No reachable destinations yet."
             )
       ),
-      hasRoutes || !(allNodes && allNodes.length)
-        ? null
-        : h(
-            "div",
-            { className: "df-panel__note" },
-            `Visible sites: ${allNodes.map((n) => n.site?.name || n.id).join(", ")}`
-          )
+      h(
+        "div",
+        { className: "df-travel__footer" },
+        h(
+          Button || "button",
+          {
+            variant: "primary",
+            onClick: () => typeof onConfirm === "function" && onConfirm(selected?.id),
+            disabled: !selected || typeof onConfirm !== "function",
+          },
+          selected ? `Travel to ${selected.site?.name || selected.id}` : "Choose a destination"
+        ),
+        hasRoutes || !(allNodes && allNodes.length)
+          ? null
+          : h(
+              "div",
+              { className: "df-panel__note" },
+              `Visible sites: ${allNodes.map((n) => n.site?.name || n.id).join(", ")}`
+            )
+      )
     );
   };
 

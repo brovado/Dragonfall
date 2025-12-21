@@ -4,9 +4,5 @@
   DF.fmtBonus=(b)=>b===0?"+0":(b>0?`+${b}`:`${b}`);
   DF.pick=(arr,rng)=>arr[Math.floor(rng()*arr.length)];
 
-  DF.transitionTo=(scene,payload)=>{
-    if(typeof DF._setScene==="function"){
-      DF._setScene(scene,payload);
-    }
-  };
+  DF.transitionTo=(scene,payload)=>DF.director?.act("SCENE_SET",{scene,payload});
 })();
