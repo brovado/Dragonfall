@@ -39,7 +39,15 @@
 
   DF.App = () => {
     const defaultScene = DF.SCENES?.TITLE || "TITLE";
-    const [state, setState] = useState(() => DF.director.prepareState(DF.mkNewGame()));
+    const prepareStateSafe = React.useCallback(
+      (draft) => {
+        if (DF.director?.prepareState) return DF.director.prepareState(draft);
+        return draft;
+      },
+      []
+    );
+    const mkInitialState = () => prepareStateSafe(structuredClone(DF.mkNewGame()));
+    const [state, setState] = useState(mkInitialState);
     const [toast, setToast] = useState(null);
     const toastTimer = useRef(null);
     const stateRef = useRef(state);
@@ -47,10 +55,10 @@
     const setStateSafe = React.useCallback(
       (updater) =>
         setState((prev) => {
-          const draft = DF.director.prepareState(structuredClone(prev));
+          const draft = prepareStateSafe(structuredClone(prev));
           return typeof updater === "function" ? updater(draft) : draft;
         }),
-      []
+      [prepareStateSafe]
     );
 
     useEffect(() => {
@@ -59,8 +67,9 @@
     }, [state]);
 
     useEffect(() => {
+      if (!DF.director) return;
       DF.director.bind({ getState: () => stateRef.current, setState: setStateSafe });
-      DF.director.bootstrap();
+      if (typeof DF.director.bootstrap === "function") DF.director.bootstrap();
     }, [setStateSafe]);
 
     useEffect(() => {
@@ -70,8 +79,8 @@
     }, [state.phase, state.run.inCombat, state.run.danger, state.run.currentNodeId]);
 
     const travelOptions = useMemo(
-      () => DF.director.getTravelOptions(state),
-      [state.run.nodeWeb, state.run.currentNodeId, state.ui.selectedNode]
+      () => DF.director?.getTravelOptions?.(state) || [],
+      [state, state.run?.nodeWeb, state.run?.currentNodeId, state.ui?.selectedNode]
     );
 
     const showToast = (msg) => {

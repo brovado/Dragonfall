@@ -112,6 +112,22 @@
     return Array.from(out);
   };
 
+  const safeGetTravelOptions = (state = {}) => {
+    try {
+      if (DF.map?.getTravelOptions) {
+        const opts = DF.map.getTravelOptions(state);
+        if (Array.isArray(opts)) return opts;
+      }
+      if (typeof DF.getTravelOptions === "function") {
+        const opts = DF.getTravelOptions(state);
+        if (Array.isArray(opts)) return opts;
+      }
+    } catch (err) {
+      console.warn("DF.director travel options error", err);
+    }
+    return travelOptions(state);
+  };
+
   const triggerScene = ({ scene, payload = null, onMid, duration = 240 }) => {
     const token = DF.uid();
     mutate((draft) => {
@@ -393,7 +409,7 @@
   const travelSelect = (nodeId) =>
     mutate((draft) => {
       if (draft.phase !== "play") return;
-      const reachable = travelOptions(draft);
+      const reachable = safeGetTravelOptions(draft);
       if (!reachable.includes(nodeId)) {
         DF.pushLog(draft, { type: "system", text: "Choose a reachable destination." });
         return;
@@ -409,7 +425,7 @@
         return;
       }
       draft.ui.travelOpen = true;
-      const opts = travelOptions(draft);
+      const opts = safeGetTravelOptions(draft);
       draft.ui.selectedNode = draft.ui.selectedNode && opts.includes(draft.ui.selectedNode) ? draft.ui.selectedNode : opts[0] || null;
       setStatus(draft, "traveling");
     });
@@ -440,7 +456,7 @@
       return;
     }
     const state = current;
-    const reachable = travelOptions(state || {});
+    const reachable = safeGetTravelOptions(state || {});
     if (!reachable.includes(id)) {
       mutate((draft) => DF.pushLog(draft, { type: "system", text: "Destination unreachable." }));
       return;
@@ -688,7 +704,9 @@
     getActions(state) {
       return getActions(state || {});
     },
-    getTravelOptions,
+    getTravelOptions(state) {
+      return safeGetTravelOptions(state || {});
+    },
   };
 
   DF.director = director;
