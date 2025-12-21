@@ -64,6 +64,14 @@
   };
 
   const buckets = { image: "images", audio: "audio", json: "data" };
+  const missingOnce = new Set();
+
+  const warnMissing = (bucket, key) => {
+    const token = `${bucket}:${key}`;
+    if (missingOnce.has(token)) return;
+    missingOnce.add(token);
+    console.warn(`[DF] Missing asset: ${token}`);
+  };
 
   DF.ASSET_MANIFEST = manifest;
 
@@ -97,4 +105,12 @@
     DF.assets = assets;
     return assets;
   };
+
+  DF.getAsset = (bucket, key, { warn = true } = {}) => {
+    const asset = DF?.assets?.[bucket]?.[key] || null;
+    if (!asset && warn) warnMissing(bucket, key);
+    return asset;
+  };
+
+  DF.getImage = (key, opts) => DF.getAsset("images", key, opts);
 })();
