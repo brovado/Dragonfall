@@ -38,20 +38,21 @@
   }
 
   DF.App = () => {
+    const defaultScene = DF.SCENES?.TITLE || "TITLE";
     const withScreen = (draft) => {
       if (!draft.run) draft.run = { status: "exploring" };
       if (!draft.run.status) draft.run.status = "exploring";
       if (!draft.ui) draft.ui = {};
       if (typeof draft.ui.promptedWeapon !== "boolean") draft.ui.promptedWeapon = false;
       if (typeof draft.ui.promptedStyle !== "boolean") draft.ui.promptedStyle = false;
-      if (!draft.ui.scene) draft.ui.scene = DF.SCENES?.TITLE || "TITLE";
+      if (!draft.ui.scene) draft.ui.scene = defaultScene;
       if (typeof draft.ui.scenePayload === "undefined") draft.ui.scenePayload = null;
       return draft;
     };
 
     const [state, setState] = useState(() => withScreen(DF.mkNewGame()));
     const [toast, setToast] = useState(null);
-    const [wipeKey, setWipeKey] = useState(DF.SCENES?.TITLE || "TITLE");
+    const [wipeKey, setWipeKey] = useState(defaultScene);
     const toastTimer = useRef(null);
     const travelTimer = useRef(null);
 
@@ -61,18 +62,21 @@
 
     useEffect(() => {
       DF._setScene = (scene, payload) => {
+        let resolvedScene = scene;
         setState((prev) => {
           const d = withScreen(structuredClone(prev));
-          d.ui.scene = scene || DF.SCENES.PREP;
-          d.ui.scenePayload = payload || null;
+          resolvedScene = resolvedScene || d.ui.scene || defaultScene;
+          d.ui.scene = resolvedScene;
+          d.ui.scenePayload = payload ?? null;
           return d;
         });
-        setWipeKey(`${scene}-${Date.now()}`);
+        setWipeKey(`${resolvedScene}-${Date.now()}`);
       };
       return () => {
         DF._setScene = null;
       };
     }, []);
+    const scene = state.ui.scene || defaultScene;
 
     const reachableNodes = (web, currentId) => {
       if (!web || !currentId) return [];
@@ -595,8 +599,17 @@
       if (state.run.danger === "unknown" && currentNode?.kind === "fight") ensureEncounter();
     }, [state.phase, state.run.inCombat, state.run.danger, state.run.currentNodeId]);
 
-    const subtitle = state.phase === "dead" ? "☠️ Fallen" : state.phase === "play" ? "In the Mountain" : "Preparation";
+    const subtitle =
+      scene === DF.SCENES.TITLE
+        ? "Title Screen"
+        : scene === DF.SCENES.GAMEOVER || state.phase === "dead"
+        ? "☠️ Fallen"
+        : state.phase === "play"
+        ? "In the Mountain"
+        : "Preparation";
     const modeLabel = (() => {
+      if (scene === DF.SCENES.TITLE) return "Title";
+      if (scene === DF.SCENES.GAMEOVER) return "Run Ended";
       if (state.phase !== "play") return subtitle;
       if (state.run.inCombat) return "In Combat";
       if (state.run.status === "traveling") return "Traveling";
@@ -670,7 +683,7 @@
             )
           )
         );
-      if (state.ui.scene === DF.SCENES.TITLE) {
+      if (scene === DF.SCENES.TITLE) {
         const img = DF.assets?.images?.ui_title;
         return h(
           "div",
@@ -700,7 +713,7 @@
           ])
         );
       }
-      if (state.ui.scene === DF.SCENES.GAMEOVER) {
+      if (scene === DF.SCENES.GAMEOVER) {
         const img = DF.assets?.images?.ui_gameover;
         return h(
           "div",
@@ -719,7 +732,7 @@
           ])
         );
       }
-      if (state.ui.scene === DF.SCENES.TRAVEL_SPLASH) {
+      if (scene === DF.SCENES.TRAVEL_SPLASH) {
         const text = state.ui.scenePayload?.travelText || "Traveling…";
         return h("div", { className: "df-overlay-card" }, h("div", { className: "df-overlay-card__title" }, text));
       }
@@ -730,8 +743,8 @@
 
     const canTravel = state.phase === "play" && !state.run.inCombat;
     const actionButtons = (() => {
-      if (state.ui.scene === DF.SCENES.TITLE) return [];
-      if (state.ui.scene === DF.SCENES.GAMEOVER) {
+      if (scene === DF.SCENES.TITLE) return [];
+      if (scene === DF.SCENES.GAMEOVER) {
         return [
           { key: "retry", label: "Retry", hint: "1", onClick: reviveToStart },
           { key: "quit", label: "Quit to Prep", hint: "2", onClick: quitToPrep },
@@ -766,8 +779,8 @@
     })();
 
     const worldLayer = (() => {
-      if (state.ui.scene === DF.SCENES.TITLE || state.ui.scene === DF.SCENES.GAMEOVER) {
-        const imgKey = state.ui.scene === DF.SCENES.GAMEOVER ? "ui_gameover" : "ui_title";
+      if (scene === DF.SCENES.TITLE || scene === DF.SCENES.GAMEOVER) {
+        const imgKey = scene === DF.SCENES.GAMEOVER ? "ui_gameover" : "ui_title";
         const img = DF.assets?.images?.[imgKey];
         return h("div", {
           style: {
@@ -778,6 +791,9 @@
             backgroundPosition: "center",
           },
         });
+      }
+      if (scene === DF.SCENES.PREP) {
+        return h(DF.PrepScreen, { state });
       }
       return worldCard;
     })();
@@ -795,13 +811,13 @@
     );
 
     const dialogLayerForScene =
-      state.ui.scene === DF.SCENES.TITLE
+      scene === DF.SCENES.TITLE
         ? h(
             "div",
             { className: "df-playwindow__dialog-shell" },
             h("div", { className: "df-log-line" }, "Press Start to enter the Beacon.")
           )
-        : state.ui.scene === DF.SCENES.GAMEOVER
+        : scene === DF.SCENES.GAMEOVER
         ? h(
             "div",
             { className: "df-playwindow__dialog-shell" },
