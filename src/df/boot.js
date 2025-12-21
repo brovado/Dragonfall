@@ -23,6 +23,7 @@
     "./src/df/constants/dr.js","./src/df/constants/index.js",
     "./src/df/data/weapons.js","./src/df/data/elements.js","./src/df/data/enemies.js","./src/df/data/sites.js","./src/df/data/index.js",
     "./src/df/logic/dice.js","./src/df/logic/stats.js","./src/df/logic/skills.js","./src/df/logic/map.js","./src/df/logic/combat.js","./src/df/logic/index.js",
+    "./src/df/game/director.js",
     "./src/df/state/log.js","./src/df/state/save.js","./src/df/state/newGame.js","./src/df/state/index.js",
     "./src/df/ui/components/Card.js","./src/df/ui/components/Pill.js","./src/df/ui/components/Button.js","./src/df/ui/components/Divider.js","./src/df/ui/components/PromotionModal.js","./src/df/ui/components/Toast.js","./src/df/ui/components/WorldViewport.js","./src/df/ui/components/ActionBar.js","./src/df/ui/components/TravelOverlay.js","./src/df/ui/components/ScreenWipe.js","./src/df/ui/components/PlayWindow.js","./src/df/ui/components/index.js",
     "./src/df/ui/panels/EventLog.js","./src/df/ui/panels/CharacterPanel.js","./src/df/ui/panels/HelpPanel.js","./src/df/ui/panels/index.js",

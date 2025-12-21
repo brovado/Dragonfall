@@ -4,7 +4,7 @@
   if (!React) return;
   const h = React.createElement;
 
-  DF.PlayWindow = ({ worldLayer, overlayLayer, dialogLayer, actionLayer, wipeKey }) =>
+  DF.PlayWindow = ({ worldLayer, overlayLayer, dialogLayer, actionLayer, sceneWipe }) =>
     h(
       "div",
       { className: "df-playwindow df-ui" },
@@ -15,7 +15,7 @@
         overlayLayer ? h("div", { className: "df-playwindow__overlay-layer" }, overlayLayer) : null,
         dialogLayer ? h("div", { className: "df-playwindow__dialog-layer" }, dialogLayer) : null,
         actionLayer ? h("div", { className: "df-playwindow__action-layer" }, actionLayer) : null,
-        h(DF.ScreenWipe, { activeKey: wipeKey || "wipe" })
+        h(DF.ScreenWipe, { wipeState: sceneWipe || { active: false } })
       )
     );
 })();
