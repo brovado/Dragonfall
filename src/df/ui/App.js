@@ -183,68 +183,32 @@
       )
     );
 
-    const renderOverlayLayer = () => {
-      const overlayCard = (title, actions = []) =>
+    const overlayCard = (title, actions = []) =>
+      h(
+        "div",
+        { className: "df-overlay-card" },
+        h("div", { className: "df-overlay-card__title" }, title),
         h(
           "div",
-          { className: "df-overlay-card" },
-          h("div", { className: "df-overlay-card__title" }, title),
-          h(
-            "div",
-            { className: "df-overlay-card__actions" },
-            actions.map((a) =>
-              h(
-                "button",
-                {
-                  key: a.key || a.label,
-                  className: ["df-overlay-card__btn", a.primary ? "df-overlay-card__btn--primary" : null]
-                    .filter(Boolean)
-                    .join(" "),
-                  onClick: a.onClick,
-                  type: "button",
-                },
-                a.label
-              )
-            )
-          )
-        );
-      if (scene === DF.SCENES.TITLE) {
-        return h(
-          "div",
-          { className: "df-title-card" },
-          h("div", { className: "df-title-card__eyebrow" }, "Beacon Preview"),
-          h("div", { className: "df-title-card__title" }, "Dragonfall"),
-          h("div", { className: "df-title-card__subtitle" }, "Light the beacon. Brave the mountain."),
-          h(
-            "div",
-            { className: "df-title-card__actions" },
+          { className: "df-overlay-card__actions" },
+          actions.map((a) =>
             h(
               "button",
-              { className: "df-title-card__btn", onClick: () => DF.director.act("START_RUN"), type: "button" },
-              "Start Run"
+              {
+                key: a.key || a.label,
+                className: ["df-overlay-card__btn", a.primary ? "df-overlay-card__btn--primary" : null]
+                  .filter(Boolean)
+                  .join(" "),
+                onClick: a.onClick,
+                type: "button",
+              },
+              a.label
             )
           )
-        );
-      }
-      if (scene === DF.SCENES.GAMEOVER) {
-        const imgSrc = imageSrcFor("ui_gameover");
-        return h(
-          "div",
-          {
-            className: "df-title-screen",
-            style: imgSrc
-              ? {
-                  backgroundImage: `url(${imgSrc})`,
-                }
-              : undefined,
-          },
-          overlayCard("Run Ended", [
-            { key: "retry", label: "Retry", primary: true, onClick: () => DF.director.act("RUN_RETRY") },
-            { key: "quit", label: "Quit to Prep", onClick: () => DF.director.act("RUN_QUIT") },
-          ]),
-          !imgSrc ? h("div", { className: "df-title-screen__fallback" }, "Beacon offline") : null
-        );
-      }
+        )
+      );
+
+    const renderOverlayLayer = () => {
       if (state.ui.travelOpen) {
         return h(DF.TravelOverlay, {
           currentNode: state.run.nodeWeb?.nodes?.find?.((n) => n.id === state.run.currentNodeId),
@@ -267,6 +231,7 @@
     };
 
     const overlayLayer = renderOverlayLayer();
+    const isModalOverlayActive = Boolean(overlayLayer);
 
     const actionButtons = DF.director.getActions(state);
 
@@ -274,6 +239,28 @@
       if (scene === DF.SCENES.TITLE || scene === DF.SCENES.GAMEOVER) {
         const imgKey = scene === DF.SCENES.GAMEOVER ? "ui_gameover" : "ui_title";
         const imgSrc = imageSrcFor(imgKey);
+        const titleCard =
+          scene === DF.SCENES.TITLE
+            ? h(
+                "div",
+                { className: "df-title-card" },
+                h("div", { className: "df-title-card__eyebrow" }, "Beacon Preview"),
+                h("div", { className: "df-title-card__title" }, "Dragonfall"),
+                h("div", { className: "df-title-card__subtitle" }, "Light the beacon. Brave the mountain."),
+                h(
+                  "div",
+                  { className: "df-title-card__actions" },
+                  h(
+                    "button",
+                    { className: "df-title-card__btn", onClick: () => DF.director.act("START_RUN"), type: "button" },
+                    "Start Run"
+                  )
+                )
+              )
+            : overlayCard("Run Ended", [
+                { key: "retry", label: "Retry", primary: true, onClick: () => DF.director.act("RUN_RETRY") },
+                { key: "quit", label: "Quit to Prep", onClick: () => DF.director.act("RUN_QUIT") },
+              ]);
         return h(
           "div",
           {
@@ -284,7 +271,14 @@
                 }
               : undefined,
           },
-          !imgSrc ? h("div", { className: "df-title-screen__fallback" }, "TITLE OK • Background missing") : null
+          h("div", { className: "df-title-screen__content" }, titleCard),
+          !imgSrc
+            ? h(
+                "div",
+                { className: "df-title-screen__fallback" },
+                scene === DF.SCENES.GAMEOVER ? "Beacon offline" : "TITLE OK • Background missing"
+              )
+            : null
         );
       }
       if (scene === DF.SCENES.PREP) {
@@ -351,8 +345,8 @@
             key: scene,
             worldLayer,
             overlayLayer,
-            dialogLayer: dialogLayerForScene,
-            actionLayer: h(DF.ActionBar, { actions: actionButtons }),
+            dialogLayer: isModalOverlayActive ? null : dialogLayerForScene,
+            actionLayer: isModalOverlayActive ? null : h(DF.ActionBar, { actions: actionButtons }),
             sceneWipe: state.ui.sceneWipe,
           }),
           h(DF.PromotionModal, {
