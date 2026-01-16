@@ -8,5 +8,11 @@
     MENU: "MENU",
     TRAVEL_SPLASH: "TRAVEL_SPLASH",
   });
+  DF.UI_SCREENS = Object.freeze({
+    TITLE: "TITLE",
+    PREP: "PREP",
+    RUN: "RUN",
+    RESULTS: "RESULTS",
+  });
   window.DF = DF;
 })();
