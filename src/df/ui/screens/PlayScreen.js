@@ -470,6 +470,7 @@
 
     const site = getSiteById(state.siteId);
     const WorldViewport = DF.WorldViewport;
+    const PhaserViewport = DF.PhaserViewport;
     const worldLog = (props.state && props.state.run && Array.isArray(props.state.run.log))
       ? props.state.run.log
       : [];
@@ -651,7 +652,13 @@
         "div",
         { className: "df-world-panel" },
         React.createElement("div", { className: "df-world-panel__title" }, "Field View"),
-        WorldViewport
+        PhaserViewport
+          ? React.createElement(PhaserViewport, {
+              fallback: WorldViewport
+                ? React.createElement(WorldViewport, { scale: WORLD_VIEWPORT_SCALE })
+                : React.createElement("div", { className: "text-sm opacity-70" }, "Loading viewport…"),
+            })
+          : WorldViewport
           ? React.createElement(WorldViewport, { scale: WORLD_VIEWPORT_SCALE })
           : React.createElement("div", { className: "text-sm opacity-70" }, "Loading viewport…"),
         React.createElement(
