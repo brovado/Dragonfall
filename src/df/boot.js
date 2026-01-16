@@ -29,6 +29,7 @@
     "./src/df/ui/components/Card.js","./src/df/ui/components/Pill.js","./src/df/ui/components/Button.js","./src/df/ui/components/Divider.js","./src/df/ui/components/PromotionModal.js","./src/df/ui/components/Toast.js","./src/df/ui/components/WorldViewport.js","./src/df/ui/components/ActionBar.js","./src/df/ui/components/TravelOverlay.js","./src/df/ui/components/ScreenWipe.js","./src/df/ui/components/PlayWindow.js","./src/df/ui/components/index.js",
     "./src/df/ui/panels/EventLog.js","./src/df/ui/panels/CharacterPanel.js","./src/df/ui/panels/HelpPanel.js","./src/df/ui/panels/index.js",
     "./src/df/ui/screens/PrepScreen.js","./src/df/ui/screens/PlayScreen.js","./src/df/ui/screens/DeadScreen.js","./src/df/ui/screens/index.js",
+    "./src/df/ui/screens2/ScreenRouter.js","./src/df/ui/screens2/TitleScreen.js","./src/df/ui/screens2/PrepScreen.js","./src/df/ui/screens2/RunScreen.js","./src/df/ui/screens2/ResultsScreen.js","./src/df/ui/screens2/index.js",
     "./src/df/ui/GameShell.js","./src/df/ui/App.js"
   ];
 

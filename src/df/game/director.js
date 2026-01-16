@@ -15,6 +15,17 @@
     if (typeof draft.ui.promptedWeapon !== "boolean") draft.ui.promptedWeapon = false;
     if (typeof draft.ui.promptedStyle !== "boolean") draft.ui.promptedStyle = false;
     if (!draft.ui.scene) draft.ui.scene = DF.SCENES?.TITLE || "TITLE";
+    if (!draft.ui.screen) {
+      const map = DF.UI_SCREENS || {};
+      draft.ui.screen =
+        draft.ui.scene === DF.SCENES?.PLAY
+          ? map.RUN || "RUN"
+          : draft.ui.scene === DF.SCENES?.PREP
+          ? map.PREP || "PREP"
+          : draft.ui.scene === DF.SCENES?.GAMEOVER
+          ? map.RESULTS || "RESULTS"
+          : map.TITLE || "TITLE";
+    }
     if (typeof draft.ui.scenePayload === "undefined") draft.ui.scenePayload = null;
     if (!draft.ui.sceneWipe) draft.ui.sceneWipe = { active: false, mode: "idle", token: null };
     if (typeof draft.ui.travelOpen !== "boolean") draft.ui.travelOpen = false;
@@ -128,6 +139,14 @@
     return travelOptions(state);
   };
 
+  const screenFromScene = (scene) => {
+    const map = DF.UI_SCREENS || {};
+    if (scene === DF.SCENES?.PREP) return map.PREP || "PREP";
+    if (scene === DF.SCENES?.PLAY) return map.RUN || "RUN";
+    if (scene === DF.SCENES?.GAMEOVER) return map.RESULTS || "RESULTS";
+    return map.TITLE || "TITLE";
+  };
+
   const triggerScene = ({ scene, payload = null, onMid, duration = 240 }) => {
     const token = DF.uid();
     mutate((draft) => {
@@ -138,6 +157,7 @@
       mutate((draft) => {
         if (typeof onMid === "function") onMid(draft);
         if (scene) draft.ui.scene = scene;
+        if (scene) draft.ui.screen = screenFromScene(scene);
         draft.ui.scenePayload = payload ?? draft.ui.scenePayload ?? null;
         draft.ui.sceneWipe = { active: true, mode: "in", token };
       });
@@ -554,6 +574,12 @@
     triggerScene({ scene, payload });
   };
 
+  const setScreenDirect = (screen) =>
+    mutate((draft) => {
+      if (!screen) return;
+      draft.ui.screen = screen;
+    });
+
   const startRun = () => {
     mutate((draft) => {
       appendIntroLog(draft);
@@ -696,6 +722,9 @@
           return;
         case "SCENE_SET":
           setSceneDirect(payload.scene, payload.payload ?? payload);
+          return;
+        case "UI_SET_SCREEN":
+          setScreenDirect(payload.screen);
           return;
         default:
           return;

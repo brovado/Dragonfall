@@ -39,6 +39,7 @@
 
   DF.App = () => {
     const defaultScene = DF.SCENES?.TITLE || "TITLE";
+    const defaultScreen = DF.UI_SCREENS?.TITLE || "TITLE";
     const prepareStateSafe = React.useCallback(
       (draft) => {
         if (DF.director?.prepareState) return DF.director.prepareState(draft);
@@ -53,6 +54,16 @@
     const stateRef = useRef(state);
     const missingAssetsRef = useRef(new Set());
     const scene = state.ui.scene || defaultScene;
+
+    const screenFromScene = React.useCallback((sceneToMap) => {
+      const map = DF.UI_SCREENS || {};
+      if (sceneToMap === DF.SCENES?.PREP) return map.PREP || "PREP";
+      if (sceneToMap === DF.SCENES?.PLAY) return map.RUN || "RUN";
+      if (sceneToMap === DF.SCENES?.GAMEOVER) return map.RESULTS || "RESULTS";
+      return map.TITLE || "TITLE";
+    }, []);
+
+    const screen = state.ui.screen || screenFromScene(scene) || defaultScreen;
 
     const setStateSafe = React.useCallback(
       (updater) =>
@@ -103,7 +114,7 @@
       keysToConfirm.forEach((k) => {
         if (!imageFor(k)) warnMissingAsset(k);
       });
-    }, [imageFor, warnMissingAsset, scene]);
+    }, [imageFor, warnMissingAsset, screen]);
 
     const imageSrcFor = React.useCallback((key) => imageFor(key)?.src || null, [imageFor]);
 
@@ -112,24 +123,10 @@
       [state, state.run?.nodeWeb, state.run?.currentNodeId, state.ui?.selectedNode]
     );
 
-    const showToast = (msg) => {
-      setToast(msg);
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-      toastTimer.current = setTimeout(() => setToast(null), 2200);
-    };
-
-    const subtitle =
-      scene === DF.SCENES.TITLE
-        ? "Title Screen"
-        : scene === DF.SCENES.GAMEOVER || state.phase === "dead"
-        ? "☠️ Fallen"
-        : state.phase === "play"
-        ? "In the Mountain"
-        : "Preparation";
     const modeLabel = (() => {
       if (scene === DF.SCENES.TITLE) return "Title";
       if (scene === DF.SCENES.GAMEOVER) return "Run Ended";
-      if (state.phase !== "play") return subtitle;
+      if (state.phase !== "play") return "Preparation";
       if (state.run.inCombat) return "In Combat";
       if (state.run.status === "traveling") return "Traveling";
       if (state.run.status === "resting") return "Resting";
@@ -144,25 +141,17 @@
     ];
 
     const chatLog = state.run.log || [];
-    const dialogLayer = h(
-      "div",
-      { className: "df-playwindow__dialog-shell" },
-      h(DF.EventLog, {
-        log: chatLog,
-        onPromptChoice: (promptId, choice) => DF.director.act("PROMPT_CHOICE", { promptId, choice }),
-      })
-    );
 
     const latestStory =
       (state.run.log?.find((l) => l.type === "story") || state.run.log?.[state.run.log.length - 1] || {})?.text ||
       "The mountain waits.";
-    const worldCard = h(
+
+    const worldLayer = h(
       "div",
-      { className: "df-world-viewport__frame" },
-      h("div", { className: "df-viewport-card__title" }, state.phase === "dead" ? "Beacon View" : "Field View"),
+      { className: "df-run-viewport" },
       h(
         "div",
-        { className: "df-viewport-card__canvas" },
+        { className: "df-run-viewport__viewport" },
         DF.PhaserViewport
           ? h(DF.PhaserViewport, {
               fallback: DF.WorldViewport
@@ -193,38 +182,13 @@
       ),
       h(
         "div",
-        { className: "df-viewport-card__hint" },
-        h("div", { className: "df-viewport-card__hint-main" }, latestStory),
-        h("div", { className: "df-viewport-card__hint-sub" }, modeLabel)
+        { className: "df-run-viewport__hint" },
+        h("div", { className: "df-run-viewport__hint-main" }, latestStory),
+        h("div", { className: "df-run-viewport__hint-sub" }, modeLabel)
       )
     );
 
-    const overlayCard = (title, actions = []) =>
-      h(
-        "div",
-        { className: "df-overlay-card" },
-        h("div", { className: "df-overlay-card__title" }, title),
-        h(
-          "div",
-          { className: "df-overlay-card__actions" },
-          actions.map((a) =>
-            h(
-              "button",
-              {
-                key: a.key || a.label,
-                className: ["df-overlay-card__btn", a.primary ? "df-overlay-card__btn--primary" : null]
-                  .filter(Boolean)
-                  .join(" "),
-                onClick: a.onClick,
-                type: "button",
-              },
-              a.label
-            )
-          )
-        )
-      );
-
-    const renderOverlayLayer = () => {
+    const overlayLayer = (() => {
       if (state.ui.travelOpen) {
         return h(DF.TravelOverlay, {
           currentNode: state.run.nodeWeb?.nodes?.find?.((n) => n.id === state.run.currentNodeId),
@@ -244,107 +208,43 @@
         );
       }
       return null;
-    };
-
-    const overlayLayer = renderOverlayLayer();
-    const isModalOverlayActive = Boolean(overlayLayer);
-
-    const actionButtons = DF.director.getActions(state);
-
-    const worldLayer = (() => {
-      if (scene === DF.SCENES.TITLE || scene === DF.SCENES.GAMEOVER) {
-        const imgKey = scene === DF.SCENES.GAMEOVER ? "ui_gameover" : "ui_title";
-        const imgSrc = imageSrcFor(imgKey);
-        const titleCard =
-          scene === DF.SCENES.TITLE
-            ? h(
-                "div",
-                { className: "df-title-card" },
-                h("div", { className: "df-title-card__eyebrow" }, "Beacon Preview"),
-                h("div", { className: "df-title-card__title" }, "Dragonfall"),
-                h("div", { className: "df-title-card__subtitle" }, "Light the beacon. Brave the mountain."),
-                h(
-                  "div",
-                  { className: "df-title-card__actions" },
-                  h(
-                    "button",
-                    { className: "df-title-card__btn", onClick: () => DF.director.act("START_RUN"), type: "button" },
-                    "Start Run"
-                  )
-                )
-              )
-            : overlayCard("Run Ended", [
-                { key: "retry", label: "Retry", primary: true, onClick: () => DF.director.act("RUN_RETRY") },
-                { key: "quit", label: "Quit to Prep", onClick: () => DF.director.act("RUN_QUIT") },
-              ]);
-        return h(
-          "div",
-          {
-            className: "df-title-screen",
-            style: imgSrc
-              ? {
-                  backgroundImage: `url(${imgSrc})`,
-                }
-              : undefined,
-          },
-          h("div", { className: "df-title-screen__content" }, titleCard),
-          !imgSrc
-            ? h(
-                "div",
-                { className: "df-title-screen__fallback" },
-                scene === DF.SCENES.GAMEOVER ? "Beacon offline" : "TITLE OK • Background missing"
-              )
-            : null
-        );
-      }
-      if (scene === DF.SCENES.PREP) {
-        return h(DF.PrepScreen, { state });
-      }
-      return worldCard;
     })();
 
-    const header = h(
-      "div",
-      { className: "df-frame__top" },
-      h(
-        "div",
-        { className: "df-frame__title" },
-        h("div", { className: "df-frame__title-main" }, "Dragonfall"),
-        h("div", { className: "df-frame__title-sub" }, `${subtitle} • v${DF.VERSION}`)
-      ),
-      h("div", { className: "df-frame__hud" }, ...hudPills)
-    );
+    const isModalOverlayActive = Boolean(overlayLayer);
+    const actionButtons = DF.director.getActions(state);
 
-    const dialogLayerForScene =
-      scene === DF.SCENES.TITLE
-        ? h(
-            "div",
-            { className: "df-playwindow__dialog-shell" },
-            h(DF.EventLog, {
-              log: [
-                {
-                  id: "title-start",
-                  type: "prompt",
-                  promptKey: "title-start",
-                  text: "Press Start to enter the Beacon.",
-                  choices: [{ id: "start", label: "Start Run", primary: true }],
-                  t: Date.now(),
-                  resolved: false,
-                },
-              ],
-              onPromptChoice: (_, choice) => {
-                if (!choice) return;
-                DF.director.act("START_RUN");
-              },
-            })
-          )
-        : scene === DF.SCENES.GAMEOVER
-        ? h(
-            "div",
-            { className: "df-playwindow__dialog-shell" },
-            h("div", { className: "df-log-line df-log-line--system", "data-ts": Date.now() }, "Run failed. Try again?")
-          )
-        : dialogLayer;
+    // Screen flow: TITLE -> PREP -> RUN -> RESULTS. Legacy PrepScreen + EventLog live in screens2 wrappers.
+    const screens = {
+      [DF.UI_SCREENS?.TITLE || "TITLE"]: () =>
+        h(DF.Screens2.TitleScreen, {
+          imageSrc: imageSrcFor("ui_title"),
+          onStart: () => DF.director.act("START_RUN"),
+        }),
+      [DF.UI_SCREENS?.PREP || "PREP"]: () =>
+        h(DF.Screens2.PrepScreen, {
+          state,
+          onPromptChoice: (promptId, choice) => DF.director.act("PROMPT_CHOICE", { promptId, choice }),
+        }),
+      [DF.UI_SCREENS?.RUN || "RUN"]: () =>
+        h(DF.Screens2.RunScreen, {
+          state,
+          hudPills,
+          modeLabel,
+          worldLayer,
+          overlayLayer,
+          log: chatLog,
+          onPromptChoice: (promptId, choice) => DF.director.act("PROMPT_CHOICE", { promptId, choice }),
+          actionButtons,
+          sceneWipe: state.ui.sceneWipe,
+          isOverlayActive: isModalOverlayActive,
+        }),
+      [DF.UI_SCREENS?.RESULTS || "RESULTS"]: () =>
+        h(DF.Screens2.ResultsScreen, {
+          imageSrc: imageSrcFor("ui_gameover"),
+          onRetry: () => DF.director.act("RUN_RETRY"),
+          onQuit: () => DF.director.act("RUN_QUIT"),
+        }),
+    };
 
     return h(
       ErrorBoundary,
@@ -353,17 +253,14 @@
         "div",
         { className: "df-client-stage df-ui" },
         h("div", { className: "df-client-stage__grain" }),
+        h("div", { className: "df-client-stage__vignette" }),
         h(
           "div",
           { className: "df-client-stage__frame" },
-          header,
-          h(DF.PlayWindow, {
-            key: scene,
-            worldLayer,
-            overlayLayer,
-            dialogLayer: isModalOverlayActive ? null : dialogLayerForScene,
-            actionLayer: isModalOverlayActive ? null : h(DF.ActionBar, { actions: actionButtons }),
-            sceneWipe: state.ui.sceneWipe,
+          h(DF.Screens2.ScreenRouter, {
+            screen,
+            screens,
+            transitionMs: 240,
           }),
           h(DF.PromotionModal, {
             state,
@@ -376,4 +273,5 @@
       )
     );
   };
+
 })();

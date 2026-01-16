@@ -5,4 +5,5 @@
   DF.pick=(arr,rng)=>arr[Math.floor(rng()*arr.length)];
 
   DF.transitionTo=(scene,payload)=>DF.director?.act("SCENE_SET",{scene,payload});
+  DF.setScreen=(screen)=>DF.director?.act("UI_SET_SCREEN",{screen});
 })();
