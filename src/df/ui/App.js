@@ -163,17 +163,33 @@
       h(
         "div",
         { className: "df-viewport-card__canvas" },
-        h(DF.WorldViewport, {
-          scale: 4,
-          nodeWeb: state.run.nodeWeb,
-          currentNodeId: state.run.currentNodeId,
-          availableTargets: travelOptions,
-          selectedNodeId: state.ui.selectedNode,
-          onSelectNode: (id) => {
-            DF.director.act("TRAVEL_SELECT", { nodeId: id });
-            DF.director.act("TRAVEL_OPEN");
-          },
-        })
+        DF.PhaserViewport
+          ? h(DF.PhaserViewport, {
+              fallback: DF.WorldViewport
+                ? h(DF.WorldViewport, {
+                    scale: 4,
+                    nodeWeb: state.run.nodeWeb,
+                    currentNodeId: state.run.currentNodeId,
+                    availableTargets: travelOptions,
+                    selectedNodeId: state.ui.selectedNode,
+                    onSelectNode: (id) => {
+                      DF.director.act("TRAVEL_SELECT", { nodeId: id });
+                      DF.director.act("TRAVEL_OPEN");
+                    },
+                  })
+                : h("div", { className: "df-playwindow__world-fallback" }, "Loading viewport…"),
+            })
+          : h(DF.WorldViewport, {
+              scale: 4,
+              nodeWeb: state.run.nodeWeb,
+              currentNodeId: state.run.currentNodeId,
+              availableTargets: travelOptions,
+              selectedNodeId: state.ui.selectedNode,
+              onSelectNode: (id) => {
+                DF.director.act("TRAVEL_SELECT", { nodeId: id });
+                DF.director.act("TRAVEL_OPEN");
+              },
+            })
       ),
       h(
         "div",

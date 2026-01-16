@@ -25,6 +25,7 @@
     "./src/df/logic/dice.js","./src/df/logic/stats.js","./src/df/logic/skills.js","./src/df/logic/map.js","./src/df/logic/combat.js","./src/df/logic/index.js",
     "./src/df/game/director.js",
     "./src/df/state/log.js","./src/df/state/save.js","./src/df/state/newGame.js","./src/df/state/index.js",
+    "./src/df/phaser/bridge/dfBridge.js","./src/df/phaser/scenes/BootScene.js","./src/df/phaser/scenes/CombatRoomScene.js","./src/df/phaser/PhaserViewport.js",
     "./src/df/ui/components/Card.js","./src/df/ui/components/Pill.js","./src/df/ui/components/Button.js","./src/df/ui/components/Divider.js","./src/df/ui/components/PromotionModal.js","./src/df/ui/components/Toast.js","./src/df/ui/components/WorldViewport.js","./src/df/ui/components/ActionBar.js","./src/df/ui/components/TravelOverlay.js","./src/df/ui/components/ScreenWipe.js","./src/df/ui/components/PlayWindow.js","./src/df/ui/components/index.js",
     "./src/df/ui/panels/EventLog.js","./src/df/ui/panels/CharacterPanel.js","./src/df/ui/panels/HelpPanel.js","./src/df/ui/panels/index.js",
     "./src/df/ui/screens/PrepScreen.js","./src/df/ui/screens/PlayScreen.js","./src/df/ui/screens/DeadScreen.js","./src/df/ui/screens/index.js",
